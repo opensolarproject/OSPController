@@ -10,15 +10,17 @@
 PowerSupply psu(Serial2);
 const uint8_t VMEASURE_PIN = 36;
 float inVolt_ = 0, wh_ = 0;
-double setpoint_ = 0, pgain_ = 0.2;
+double setpoint_ = 0, pgain_ = 0.1;
+int collapses_ = 0; //collapses, reset every.. minute?
+int printPeriod_ = 1000, pubPeriod_ = 12000; //TODO configurable other periods
 float vadjust_ = 105.0;
+bool autoStart_ = true;
+String mqttServ, mqttUser, mqttPass;
 
 WebServer server(80);
 WiFiClient espClient;
 PubSubClient psClient(espClient);
-#define MQTT_USERNAME ""
-char apikey[] = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
-Publishable varManager(&server, &psClient);
+Publishable pub;
 
 void setup() {
   Serial.begin(115200);
@@ -31,46 +33,66 @@ void setup() {
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info){
     Serial.println("wifi event");
   });
-  WiFi.begin();//TODO load from prefs
-  WiFi.setHostname(str("mpptESP-%02X", chipid & 0xff).c_str());
-  if (WiFi.waitForConnectResult() == WL_CONNECTED) {
-    MDNS.begin("mppt");
-    MDNS.addService("http", "tcp", 80);
-  }
-  varManager.add("pgain", pgain_);
-  varManager.add("pgain", setpoint_, 0);
-  varManager.add("outputEN",psu.outEn_); //TODO setter: psu.enableOutput()
-  varManager.add("outvolt", psu.outVolt_); //TODO setter: psu.setVoltage ()
-  varManager.add("outcurr", psu.outCurr_); //TODO setter: psu.setCurrent()
-  // varManager.add("outpower", outPower_); //TODO add getter std::function option
-  varManager.add("involt", inVolt_);
-  varManager.add("wh", wh_); //TODO disable setter
+  String wifiap, wifipass;
+  pub.add("wifiap",     wifiap).hide();
+  pub.add("wifipass", wifipass).hide();
+  pub.add("mqttServ", mqttServ).hide();
+  pub.add("mqttUser", mqttUser).hide();
+  pub.add("mqttPass", mqttPass).hide();
+  pub.add("outputEN",[](String s){ if (s.length()) psu.enableOutput(s == "on"); return String(psu.outEn_); });
+  pub.add("outvolt", [](String s){ if (s.length()) psu.setVoltage(s.toFloat()); return String(psu.outVolt_); });
+  pub.add("outcurr", [](String s){ if (s.length()) psu.setCurrent(s.toFloat()); return String(psu.outCurr_); });
+  pub.add("outpower",[](String s){ return String(psu.outVolt_ * psu.outCurr_); });
+  pub.add("pgain",      pgain_          ).pref();
+  pub.add("setpoint",   setpoint_       ).pref();
+  pub.add("vadjust",    vadjust_        ).pref();
+  pub.add("autostart",  autoStart_      ).pref();
+  pub.add("printperiod",printPeriod_    ).pref();
+  pub.add("pubperiod",  pubPeriod_      ).pref();
+  pub.add("involt",  inVolt_);
+  pub.add("wh",      wh_    ); //TODO load the old value from mqtt?
+  pub.add("reconnect",[](String s){ pubsubConnect(); return ""; });
 
   server.on("/", HTTP_ANY, []() {
     Serial.println("got req " + server.uri() + " -> " + server.hostHeader());
-    String ;
+    String ret;
+    for (int i = 0; i < server.args(); i++)
+      ret += pub.handleSet(server.argName(i), server.arg(i)) + "\n";
     server.sendHeader("Connection", "close");
     if (! ret.length()) ret = getState();
     server.send(200, "application/json", ret.c_str());
   });
-  pubsubConnect();
+  pub.loadPrefs();
+
+  if (wifiap.length() && wifipass.length()) {
+    WiFi.begin(wifiap.c_str(), wifipass.c_str());
+    WiFi.setHostname(str("mpptESP-%02X", chipid & 0xff).c_str());
+    if (WiFi.waitForConnectResult() == WL_CONNECTED) {
+      MDNS.begin("mppt");
+      MDNS.addService("http", "tcp", 80);
+      pubsubConnect();
+    }
+  } else Serial.println("no wifiap or wifipass set!");
+
   server.begin();
-//  xTaskCreate([](void*) {
-//    while (true) { }
-//  }, "psu", 10000, NULL, 1, NULL); //fn, name, stack size, parameter, priority, handle
+  //xTaskCreate([](void*) { }, "psu", 10000, NULL, 1, NULL); //fn, name, stack size, parameter, priority, handle
   Serial.println("finished setup");
 }
 
 void pubsubConnect() {
-  Serial.println("Connecting pubsub with key " + String(apikey));
-  psClient.setServer("io.adafruit.com", 1883);
-  if (psClient.connect("MPPT", MQTT_USERNAME, apikey))
-    Serial.println("PubSub connect success! " + psClient.state());
-  else Serial.println("PubSub connect ERROR! " + psClient.state());
+  if (!psClient.connected()) {
+    if (mqttServ.length()) {
+      Serial.println("Connecting MQTT to " + mqttUser + "@" + mqttServ);
+      psClient.setServer(mqttServ.c_str(), 1883); //TODO split serv:port
+      if (psClient.connect("MPPT", mqttUser.c_str(), mqttPass.c_str()))
+        Serial.println("PubSub connect success! " + psClient.state());
+      else Serial.println("PubSub connect ERROR! " + psClient.state());
+    } else Serial.println("no MQTT user / pass set up!");
+  }
 }
 
 uint32_t lastV = 0, lastpub = 20000, lastLog_ = 0;
-uint32_t lastPSUpdate_ = 0, lastPSUadjust_ = 1000;
+uint32_t lastPSUpdate_ = 0, lastPSUadjust_ = 1000, lastCollapseReset_ = 0;
 double newDesiredCurr_ = 0;
 bool needsQuickAdj_ = false;
 String logme;
@@ -93,7 +115,7 @@ void loop() {
   uint32_t now = millis();
   if ((now - lastV) >= 200) {
     analogval = analogRead(VMEASURE_PIN);
-    inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;//mapfloat(analogval, 2743, 2906, 74.8, 80.0); //
+    inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
     if (setpoint_ > 0 && psu.outEn_) { //corrections enabled
       double error = inVolt_ - setpoint_;
       double dcurr = constrain(error * pgain_, -3, 1); //limit ramping speed
@@ -112,20 +134,20 @@ void loop() {
     if (setpoint_ > 0) {
       if (psu.outEn_)
         applyAdjustment();
-      if (psu.outEn_ && inVolt_ < (62.0)) { //collapse detection
+      if (psu.outEn_ && inVolt_ < (setpoint_  * 3 / 4)) { //collapse detection
         newDesiredCurr_ = psu.outCurr_ / 3;
-        Serial.printf("collapsed! %0.1fV set recovery %0.1fA\n", inVolt_ ,newDesiredCurr_);
-        psu.enableOutput(false);
-        psu.outEn_ = false;
+        ++collapses_;
+        Serial.printf("collapsed! %0.1fV set recovery to %0.1fA\n", inVolt_ ,newDesiredCurr_);
+        psu.enableOutput((psu.outEn_ = false));
         psu.setCurrent(newDesiredCurr_);
-      } else if (!psu.outEn_) {
+      } else if (autoStart_ && !psu.outEn_ && inVolt_ > (setpoint_ * 1.02)) {
         Serial.println("restoring from collapse");
         psu.enableOutput(true);
       }
     }
     lastPSUadjust_ = now;
   }
-  if ((now - lastLog_) >= 1000) {
+  if ((now - lastLog_) >= printPeriod_) {
     printStatus();
     lastLog_ = now;
   }
@@ -139,15 +161,21 @@ void loop() {
     }
     lastPSUpdate_ = now;
   }
-  if ((now - lastpub) >= 12000) {
+  if ((now - lastpub) >= (psu.outEn_? pubPeriod_ : pubPeriod_ * 3)) { //slow-down when not enabled
     if (psClient.connected() && psu.outVolt_ > 0.0) {
-      if (psClient.publish(MQTT_USERNAME"/feeds/outvolt", String(psu.outVolt_,2).c_str()) &&
-          psClient.publish(MQTT_USERNAME"/feeds/outcurr", String(psu.outCurr_,2).c_str()) &&
-          psClient.publish(MQTT_USERNAME"/feeds/outpower", String(psu.outVolt_ * psu.outCurr_,2).c_str()) &&
-          psClient.publish(MQTT_USERNAME"/feeds/involt", String(inVolt_,2).c_str()) &&
-          psClient.publish(MQTT_USERNAME"/feeds/wh", String(wh_,3).c_str()))
+      if (psClient.publish((mqttUser + "/feeds/outvolt" ).c_str(), String(psu.outVolt_,2).c_str()) &&
+          psClient.publish((mqttUser + "/feeds/outcurr" ).c_str(), String(psu.outCurr_,2).c_str()) &&
+          psClient.publish((mqttUser + "/feeds/outpower").c_str(), String(psu.outVolt_ * psu.outCurr_,2).c_str()) &&
+          psClient.publish((mqttUser + "/feeds/involt"  ).c_str(), String(inVolt_,2).c_str()) &&
+          psClient.publish((mqttUser + "/feeds/wh"      ).c_str(), String(wh_,3).c_str()))
         logme += "[published]";
-    }
+    } else if (!psClient.connected())
+      pubsubConnect();
+    lastpub = now;
+  }
+  if ((now - lastCollapseReset_) >= 60000) {
+    psClient.publish((mqttUser + "/feeds/collapses").c_str(), String(collapses_).c_str());
+    collapses_ = 0;
     lastpub = now;
   }
   server.handleClient();
