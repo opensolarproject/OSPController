@@ -82,6 +82,13 @@ String Publishable::handleSet(String key, String val) {
   return "unknown key " + key;
 }
 
+std::list<PubItem const*> Publishable::items() const {
+  std::list<PubItem const*> ret;
+  for (const auto & i : items_)
+    ret.push_back(i.second);
+  return ret;
+}
+
 void Publishable::poll(Stream* stream) {
   if (stream->available()) { //cmd val
     String cmd = stream->readStringUntil(' ');

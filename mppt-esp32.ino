@@ -15,7 +15,7 @@ int collapses_ = 0; //collapses, reset every.. minute?
 int printPeriod_ = 1000, pubPeriod_ = 12000; //TODO configurable other periods
 float vadjust_ = 105.0;
 bool autoStart_ = true;
-String mqttServ, mqttUser, mqttPass;
+String mqttServ, mqttUser, mqttPass, mqttFeed;
 
 WebServer server(80);
 WiFiClient espClient;
@@ -163,18 +163,18 @@ void loop() {
   }
   if ((now - lastpub) >= (psu.outEn_? pubPeriod_ : pubPeriod_ * 3)) { //slow-down when not enabled
     if (psClient.connected() && psu.outVolt_ > 0.0) {
-      if (psClient.publish((mqttUser + "/feeds/outvolt" ).c_str(), String(psu.outVolt_,2).c_str()) &&
-          psClient.publish((mqttUser + "/feeds/outcurr" ).c_str(), String(psu.outCurr_,2).c_str()) &&
-          psClient.publish((mqttUser + "/feeds/outpower").c_str(), String(psu.outVolt_ * psu.outCurr_,2).c_str()) &&
-          psClient.publish((mqttUser + "/feeds/involt"  ).c_str(), String(inVolt_,2).c_str()) &&
-          psClient.publish((mqttUser + "/feeds/wh"      ).c_str(), String(wh_,3).c_str()))
-        logme += "[published]";
+      int errs = 0;
+      auto pubs = pub.items();
+      for (auto i : pubs)
+        if (!i->pref_)
+          errs += !psClient.publish((mqttFeed + "/" + i->key).c_str(), i->toString().c_str());
+      logme += "[published]" + (errs? str("..%d errors!", errs) : "");
     } else if (!psClient.connected())
       pubsubConnect();
     lastpub = now;
   }
   if ((now - lastCollapseReset_) >= 60000) {
-    psClient.publish((mqttUser + "/feeds/collapses").c_str(), String(collapses_).c_str());
+    psClient.publish((mqttFeed + "/collapses").c_str(), String(collapses_).c_str());
     collapses_ = 0;
     lastpub = now;
   }

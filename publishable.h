@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <functional>
 #include <map>
+#include <list>
 
 class PubSubClient;
 class WebServer;
@@ -44,6 +45,8 @@ public:
   String toJson() const;
   int loadPrefs();
   int savePrefs();
+  std::list<PubItem const*> items() const;
+
 
 private:
   PubItem& add(PubItem*);
