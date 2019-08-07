@@ -53,7 +53,8 @@ void setup() {
   pub.add("pubperiod",  pubPeriod_      ).pref();
   pub.add("involt",  inVolt_);
   pub.add("wh",      wh_    ); //TODO load the old value from mqtt?
-  pub.add("connect",[](String s){ pubsubConnect(); return "connected"; }).hide();
+  pub.add("collapses",  collapses_);
+  pub.add("connect",[](String s){ doConnect(); return "connected"; }).hide();
   pub.add("disconnect",[](String s){ psClient.disconnect(); WiFi.disconnect(); return "dissed"; }).hide();
   pub.add("restart",[](String s){ ESP.restart(); return ""; }).hide();
   pub.add("clear",[](String s){ pub.clearPrefs(); return "cleared"; }).hide();
@@ -74,7 +75,7 @@ void setup() {
   Serial.println("finished setup");
 }
 
-void wifiConnect() {
+void doConnect() {
   if (! WiFi.isConnected()) {
     if (wifiap.length() && wifipass.length()) {
       WiFi.begin(wifiap.c_str(), wifipass.c_str());
@@ -85,14 +86,10 @@ void wifiConnect() {
         Serial.println("Wifi connected! hostname: " + hostname);
         MDNS.begin("mppt");
         MDNS.addService("http", "tcp", 80);
-        pubsubConnect();
         server.begin();
       }
     } else Serial.println("no wifiap or wifipass set!");
   }
-}
-
-void pubsubConnect() {
   if (WiFi.isConnected() && !psClient.connected()) {
     if (mqttServ.length() && mqttFeed.length()) {
       Serial.println("Connecting MQTT to " + mqttUser + "@" + mqttServ);
@@ -116,6 +113,7 @@ void applyAdjustment() {
       logme += str("[adjusting %0.1fA (from %0.1fA)] ", newDesiredCurr_ - psu.outCurr_, psu.outCurr_);
     else Serial.println("error setting current");
     psu.readCurrent();
+    pub.setDirty({"outcurr", "outpower"});
     if (needsQuickAdj_)
       needsQuickAdj_ = false;
     printStatus();
@@ -128,6 +126,7 @@ void loop() {
   if ((now - lastV) >= 200) {
     int analogval = analogRead(VMEASURE_PIN);
     inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
+    pub.setDirty(&inVolt_);
     if (setpoint_ > 0 && psu.outEn_) { //corrections enabled
       double error = inVolt_ - setpoint_;
       double dcurr = constrain(error * pgain_, -3, 1); //limit ramping speed
@@ -164,8 +163,10 @@ void loop() {
   }
   if ((now - lastPSUpdate_) >= 5000) {
     bool res = psu.doUpdate();
-    if (res) wh_ += psu.outVolt_ * psu.outCurr_ * (now - lastPSUpdate_) / 1000.0 / 60 / 60;
-    else {
+    if (res) {
+      wh_ += psu.outVolt_ * psu.outCurr_ * (now - lastPSUpdate_) / 1000.0 / 60 / 60;
+      pub.setDirty({"outvolt", "outcurr", "outputEN", "wh", "outpower"});
+    } else {
       Serial.println("psu update fail");
       psu.flush();
       //psu.debug_ = true;
@@ -175,32 +176,26 @@ void loop() {
 }
 
 void publishTask(void*) {
-  wifiConnect();
-  while (psu.outVolt_ == 0)
-    delay(1);
-  Serial.println("starting publish task");
-  delay(1); //wait for the full PSU poll to complete
+  doConnect();
   while (true) {
     uint32_t now = millis();
     if ((now - lastpub) >= (psu.outEn_? pubPeriod_ : pubPeriod_ * 3)) { //slow-down when not enabled
       if (psClient.connected()) {
         int wins = 0;
-        auto pubs = pub.items();
+        auto pubs = pub.items(true);
         for (auto i : pubs)
-          if (!i->hidden_)
-            wins += psClient.publish((mqttFeed + "/" + i->key).c_str(), i->toString().c_str(), true)? 1 : 0;
+          wins += psClient.publish((mqttFeed + "/" + (i->pref_? "prefs/":"") + i->key).c_str(), i->toString().c_str(), true)? 1 : 0;
         logme += str("[published %d] ", wins);
+        pub.clearDirty();
       } else {
         logme += "[pub disconnected] ";
-        wifiConnect();
-        pubsubConnect();
+        doConnect();
       }
       lastpub = now;
     }
     if ((now - lastCollapseReset_) >= 60000) {
-      psClient.publish((mqttFeed + "/collapses").c_str(), String(collapses_).c_str(), true);
-      Serial.println("published collapses: " + String(collapses_));
       collapses_ = 0;
+      pub.setDirty(&collapses_);
       lastCollapseReset_ = now;
     }
     psClient.loop();

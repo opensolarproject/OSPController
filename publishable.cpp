@@ -10,6 +10,7 @@ struct Pub : PubItem {
   ~Pub() { }
   String toString() const override { return String(*value); }
   String set(String v) override { *value = v.toFloat(); return toString(); }
+  void const* val() const override { return value; }
   void save(Preferences&p) override { p.putBytes(key.c_str(), value, sizeof(*value)); }
   void load(Preferences&p) override { p.getBytes(key.c_str(), value, sizeof(*value)); }
 };
@@ -18,7 +19,10 @@ template<> String Pub<bool* >::toString() const { return (*value)? "true":"false
 template<> String Pub<Action>::toString() const { return (value)(""); }
 template<> String Pub<bool* >::set(String v) { (*value) = v=="on" || v=="true" || v=="1"; return toString(); }
 template<> String Pub<Action>::set(String v) { return (value)(v); }
-
+template<> void const* Pub<Action>::val() const { return &value; }
+  
+template<> void Pub<Action>::save(Preferences&p) { }
+template<> void Pub<Action>::load(Preferences&p) { }
 template<> String Pub<String*>::set(String v) { return (*value) = v; }
 template<> String Pub<String*>::toString() const { return (*value); }
 template<> void Pub<String*>::save(Preferences&p) { p.putBytes(key.c_str(), value->c_str(), value->length()); }
@@ -27,10 +31,7 @@ template<> void Pub<String*>::load(Preferences&p) {
   size_t l = p.getBytes(key.c_str(), buf, 128);
   buf[l] = 0; //null terminate
   (*value) = String(buf);
-  Serial.println("reserecting key " + key + " with " + String(l) + "b to: " + (*value));
 }
-template<> void Pub<Action>::save(Preferences&p) { }
-template<> void Pub<Action>::load(Preferences&p) { }
 
 Publishable::Publishable() {
   add("save", [this](String s){
@@ -64,6 +65,7 @@ int Publishable::loadPrefs() {
   for (const auto & i : items_)
     if (i.second->pref_) {
       i.second->load(prefs);
+      i.second->dirty_ = true;
       Serial.println("loaded key " + i.first + " to " + i.second->toString());
       ret++;
     }
@@ -91,16 +93,29 @@ String Publishable::handleSet(String key, String val) {
   for (auto i : items_)
     if (i.first == key) {
       String ret = i.second->set(val);
+      i.second->dirty_ = true;
       return (ret.length())? ret : ("set " + key + " to " + val);
     }
   return "unknown key " + key;
 }
 
-std::list<PubItem const*> Publishable::items() const {
+std::list<PubItem const*> Publishable::items(bool dirtyOnly) const {
   std::list<PubItem const*> ret;
   for (const auto & i : items_)
-    ret.push_back(i.second);
+    if (!dirtyOnly || i.second->dirty_)
+      if (! i.second->hidden_)
+        ret.push_back(i.second);
   return ret;
+}
+
+void Publishable::clearDirty() { for (auto &i : items_) i.second->dirty_ = false; }
+void Publishable::setDirty(String key) { auto it = items_.find(key); if (it != items_.end()) it->second->dirty_ = true; }
+void Publishable::setDirty(std::list<String>dlist) { for (auto i : dlist) setDirty(i); }
+void Publishable::setDirty(void const* v) {
+  for (const auto & i : items_)
+    if (v == i.second->val())
+      { i.second->dirty_ = true; return; }
+  Serial.printf("Pub::setDirty missing addr %P\n", v);
 }
 
 void Publishable::poll(Stream* stream) {

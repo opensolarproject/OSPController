@@ -16,11 +16,12 @@ typedef std::function<void(String)> SetFn;
 struct PubItem {
   String key;
   int period;
-  bool pref_, hidden_;
-  PubItem(String k, int p) : key(k), period(p), pref_(false), hidden_(false) { }
+  bool pref_, hidden_, dirty_;
+  PubItem(String k, int p) : key(k), period(p), pref_(false), hidden_(false), dirty_(false) { }
   virtual ~PubItem() { }
   virtual String toString() const = 0;
   virtual String set(String v) = 0;
+  virtual void const* val() const = 0;
   virtual void save(Preferences&) = 0;
   virtual void load(Preferences&) = 0;
   virtual PubItem& pref() { pref_ = true; return *this; }
@@ -46,7 +47,11 @@ public:
   int loadPrefs();
   int savePrefs();
   bool clearPrefs();
-  std::list<PubItem const*> items() const;
+  std::list<PubItem const*> items(bool dirtyOnly=true) const;
+  void setDirty(String key);
+  void setDirty(void const*);
+  void setDirty(std::list<String>);
+  void clearDirty();
 
 
 private:
