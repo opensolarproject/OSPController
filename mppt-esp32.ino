@@ -177,6 +177,17 @@ void loop() {
 
 void publishTask(void*) {
   doConnect();
+  psClient.setCallback([](char*topicbuf, uint8_t*buf, unsigned int len){
+    String topic(topicbuf), val = str(std::string((char*)buf, len));
+    Serial.println("got sub value " + topic + " -> " + val);
+    if (topic == (mqttFeed + "/wh")) {
+      wh_ = val.toFloat();
+      Serial.println("restored wh value to " + val);
+      psClient.unsubscribe((mqttFeed + "/wh").c_str());
+    }
+  });
+  psClient.subscribe((mqttFeed + "/wh").c_str());
+
   while (true) {
     uint32_t now = millis();
     if ((now - lastpub) >= (psu.outEn_? pubPeriod_ : pubPeriod_ * 3)) { //slow-down when not enabled
