@@ -26,7 +26,7 @@ String str(bool v) {
 
 
 
-PowerSupply::PowerSupply(Stream &port) : _port(&port), debug_(true) { }
+PowerSupply::PowerSupply(Stream &port) : _port(&port), debug_(false) { }
 
 bool PowerSupply::doUpdate() {
   return readVoltage() && 

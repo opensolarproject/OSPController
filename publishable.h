@@ -45,6 +45,7 @@ public:
   String toJson() const;
   int loadPrefs();
   int savePrefs();
+  bool clearPrefs();
   std::list<PubItem const*> items() const;
 
 

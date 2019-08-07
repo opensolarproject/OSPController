@@ -14,30 +14,39 @@ struct Pub : PubItem {
   void load(Preferences&p) override { p.getBytes(key.c_str(), value, sizeof(*value)); }
 };
 
-template<> String Pub<bool* >::toString() const { return (*value)? "on":"off"; }
-template<> String Pub<Action>::toString() const { return "action"+key; }
-template<> String Pub<bool* >::set(String v) { *value = v.indexOf("on") > 0; return toString(); } //TODO support '1' && 'true'
+template<> String Pub<bool* >::toString() const { return (*value)? "true":"false"; }
+template<> String Pub<Action>::toString() const { return (value)(""); }
+template<> String Pub<bool* >::set(String v) { (*value) = v=="on" || v=="true" || v=="1"; return toString(); }
 template<> String Pub<Action>::set(String v) { return (value)(v); }
-template<> void Pub<String*>::save(Preferences&p) { p.putString(key.c_str(), *value); }
-template<> void Pub<String*>::load(Preferences&p) { p.getString(key.c_str(), *value); }
+
+template<> String Pub<String*>::set(String v) { return (*value) = v; }
+template<> String Pub<String*>::toString() const { return (*value); }
+template<> void Pub<String*>::save(Preferences&p) { p.putBytes(key.c_str(), value->c_str(), value->length()); }
+template<> void Pub<String*>::load(Preferences&p) {
+  char buf[128];
+  size_t l = p.getBytes(key.c_str(), buf, 128);
+  buf[l] = 0; //null terminate
+  (*value) = String(buf);
+  Serial.println("reserecting key " + key + " with " + String(l) + "b to: " + (*value));
+}
 template<> void Pub<Action>::save(Preferences&p) { }
 template<> void Pub<Action>::load(Preferences&p) { }
 
 Publishable::Publishable() {
   add("save", [this](String s){
     return str("saved %d prefs", this->savePrefs());
-  });
+  }).hide();
   add("load", [this](String s){
     return str("loaded %d prefs", this->loadPrefs());
-  });
+  }).hide();
   Action a = [this](String s){
     String ret = "help:";
     for (auto i : items_)
       ret += "\n- " + i.first + " = " + i.second->toString();
     return ret;
   };
-  add("help", a);
-  add("list", a);
+  add("help", a).hide();
+  add("list", a).hide();
 }
 
 PubItem& Publishable::add(PubItem* p) { items_[p->key] = p; return *p; }
@@ -67,10 +76,15 @@ int Publishable::savePrefs() {
   for (const auto & i : items_)
     if (i.second->pref_) {
       i.second->save(prefs);
-      Serial.println("saved key " + i.first + " to " + i.second->toString());
+      Serial.println("saved key " + i.first + " to " + i.second->toString() + str(" (%d free)", prefs.freeEntries()));
       ret++;
     }
   return ret;
+}
+bool Publishable::clearPrefs() {
+  Preferences prefs;
+  prefs.begin("Publishable", false); //read-write
+  return prefs.clear();
 }
 
 String Publishable::handleSet(String key, String val) {
@@ -109,5 +123,5 @@ String Publishable::toJson() const {
       ret += "  \"" + i.first + "\":" + i.second->toString() + ",\n";
   if (items_.size())
     ret.remove(ret.length() - 2, 2); //remove trailing comma + LF
-  return ret + "}\n";
+  return ret + "\n}\n";
 }
