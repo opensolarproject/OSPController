@@ -17,6 +17,7 @@ float vadjust_ = 105.0;
 bool autoStart_ = true;
 String wifiap, wifipass;
 String mqttServ, mqttUser, mqttPass, mqttFeed;
+uint32_t ignoreSubsUntil_;
 
 WebServer server(80);
 WiFiClient espClient;
@@ -54,7 +55,7 @@ void setup() {
   pub.add("PSUperiod",  psuperiod_      ).pref();
   pub.add("measperiod", measperiod_     ).pref();
   pub.add("involt",  inVolt_);
-  pub.add("wh",      wh_    ); //TODO load the old value from mqtt?
+  pub.add("wh",      wh_    );
   pub.add("collapses",  collapses_);
   pub.add("connect",[](String s){ doConnect(); return "connected"; }).hide();
   pub.add("disconnect",[](String s){ psClient.disconnect(); WiFi.disconnect(); return "dissed"; }).hide();
@@ -101,6 +102,10 @@ void doConnect() {
       psClient.setServer(mqttServ.c_str(), 1883); //TODO split serv:port
       if (psClient.connect("MPPT", mqttUser.c_str(), mqttPass.c_str()))
         Serial.println("PubSub connect success! " + psClient.state());
+        auto pubs = pub.items(true);
+        for (auto i : pubs)
+          if (i->pref_)
+            psClient.subscribe((mqttFeed + "/prefs/" + i->key).c_str()); //subscribe to preference changes!
       else Serial.println("PubSub connect ERROR! " + psClient.state());
     } else Serial.println("no MQTT user / pass / server / feed set up!");
   } else Serial.printf("can't pub connect, wifi %d pub %d\n", WiFi.isConnected(), psClient.connected());
@@ -183,6 +188,8 @@ void loop() {
 
 void publishTask(void*) {
   doConnect();
+  psClient.loop();
+  ignoreSubsUntil_ = millis() + 3000;
   psClient.setCallback([](char*topicbuf, uint8_t*buf, unsigned int len){
     String topic(topicbuf), val = str(std::string((char*)buf, len));
     Serial.println("got sub value " + topic + " -> " + val);
@@ -190,6 +197,10 @@ void publishTask(void*) {
       wh_ = val.toFloat();
       Serial.println("restored wh value to " + val);
       psClient.unsubscribe((mqttFeed + "/wh").c_str());
+    } else if (millis() > ignoreSubsUntil_) { //don't load old values
+      topic.replace(mqttFeed + "/prefs/", ""); //replaces in-place, sadly
+      String ret = pub.handleSet(topic, val);
+      Serial.println("MQTT cmd: " + ret);
     }
   });
   psClient.subscribe((mqttFeed + "/wh").c_str());
@@ -200,8 +211,10 @@ void publishTask(void*) {
       if (psClient.connected()) {
         int wins = 0;
         auto pubs = pub.items(true);
-        for (auto i : pubs)
+        for (auto i : pubs) {
           wins += psClient.publish((mqttFeed + "/" + (i->pref_? "prefs/":"") + i->key).c_str(), i->toString().c_str(), true)? 1 : 0;
+          if (i->pref_) ignoreSubsUntil_ = now + 3000;
+        }
         logme += str("[published %d] ", wins);
         pub.clearDirty();
       } else {
