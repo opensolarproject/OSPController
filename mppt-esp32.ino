@@ -12,7 +12,7 @@ const uint8_t VMEASURE_PIN = 36;
 float inVolt_ = 0, wh_ = 0;
 double setpoint_ = 0, pgain_ = 0.1;
 int collapses_ = 0; //collapses, reset every.. minute?
-int printPeriod_ = 1000, pubPeriod_ = 12000; //TODO configurable other periods
+int measperiod_ = 100, printPeriod_ = 1000, pubPeriod_ = 12000, psuperiod_ = 2000;
 float vadjust_ = 105.0;
 bool autoStart_ = true;
 String wifiap, wifipass;
@@ -51,6 +51,8 @@ void setup() {
   pub.add("autostart",  autoStart_      ).pref();
   pub.add("printperiod",printPeriod_    ).pref();
   pub.add("pubperiod",  pubPeriod_      ).pref();
+  pub.add("PSUperiod",  psuperiod_      ).pref();
+  pub.add("measperiod", measperiod_     ).pref();
   pub.add("involt",  inVolt_);
   pub.add("wh",      wh_    ); //TODO load the old value from mqtt?
   pub.add("collapses",  collapses_);
@@ -70,6 +72,9 @@ void setup() {
   });
   pub.loadPrefs();
   // wifi & mqtt is connected by pubsubConnect below
+
+  psu.flush();
+  psu.doUpdate();
 
   xTaskCreate(publishTask, "publish", 10000, NULL, 1, NULL); //fn, name, stack size, parameter, priority, handle
   Serial.println("finished setup");
@@ -123,7 +128,7 @@ void applyAdjustment() {
 
 void loop() {
   uint32_t now = millis();
-  if ((now - lastV) >= 200) {
+  if ((now - lastV) >= measperiod_) {
     int analogval = analogRead(VMEASURE_PIN);
     inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
     pub.setDirty(&inVolt_);
@@ -140,13 +145,14 @@ void loop() {
     }
     lastV = millis();
   }
-  if ((now - lastPSUadjust_) >= (needsQuickAdj_? 500 : 5000)) {
+  if ((now - lastPSUadjust_) >= (needsQuickAdj_? 100 : psuperiod_)) {
     if (setpoint_ > 0) {
       if (psu.outEn_)
         applyAdjustment();
-      if (psu.outEn_ && inVolt_ < (setpoint_  * 3 / 4)) { //collapse detection
-        newDesiredCurr_ = psu.outCurr_ / 3;
+      if (psu.outEn_ && inVolt_ < (psu.outVolt_ * 3 / 2)) { //collapse detection
+        newDesiredCurr_ = psu.outCurr_ / 2;
         ++collapses_;
+        pub.setDirty(&collapses_);
         Serial.printf("collapsed! %0.1fV set recovery to %0.1fA\n", inVolt_ ,newDesiredCurr_);
         psu.enableOutput((psu.outEn_ = false));
         psu.setCurrent(newDesiredCurr_);
@@ -190,7 +196,7 @@ void publishTask(void*) {
 
   while (true) {
     uint32_t now = millis();
-    if ((now - lastpub) >= (psu.outEn_? pubPeriod_ : pubPeriod_ * 3)) { //slow-down when not enabled
+    if ((now - lastpub) >= (psu.outEn_? pubPeriod_ : pubPeriod_ * 4)) { //slow-down when not enabled
       if (psClient.connected()) {
         int wins = 0;
         auto pubs = pub.items(true);
