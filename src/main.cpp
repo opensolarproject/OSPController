@@ -1,7 +1,7 @@
 #include <solar.h>
 
-System system;
+FreeTheSun fts;
 
-int main(char** argv, int argc) {
-    system.run();
+int main(int argc, char** argv) {
+    fts.run();
 }
