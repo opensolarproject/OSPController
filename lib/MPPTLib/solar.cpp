@@ -4,15 +4,15 @@
 #include <ESPmDNS.h>
 #include <Update.h>
 
-FreeTheSun::FreeTheSun() :
+Solar::Solar() :
         psu_(Serial1),
         server_(80),
         pub_() { }
 
-// void runLoop(void*c) { ((FreeTheSun*)c)->loopTask(); }
-void runPubt(void*c) { ((FreeTheSun*)c)->publishTask(); }
+// void runLoop(void*c) { ((Solar*)c)->loopTask(); }
+void runPubt(void*c) { ((Solar*)c)->publishTask(); }
 
-void FreeTheSun::setup() {
+void Solar::setup() {
   Serial.begin(115200);
   Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
   delay(100);
@@ -71,7 +71,7 @@ void FreeTheSun::setup() {
   Serial.println("finished setup");
 }
 
-void FreeTheSun::doConnect() {
+void Solar::doConnect() {
   if (! WiFi.isConnected()) {
     if (wifiap.length() && wifipass.length()) {
       WiFi.begin(wifiap.c_str(), wifipass.c_str());
@@ -108,7 +108,7 @@ double newDesiredCurr_ = 0;
 bool needsQuickAdj_ = false;
 String logme;
 
-void FreeTheSun::applyAdjustment() {
+void Solar::applyAdjustment() {
   if (newDesiredCurr_ > 0) {
     if (psu_.setCurrent(newDesiredCurr_))
       logme += str("[adjusting %0.1fA (from %0.1fA)] ", newDesiredCurr_ - psu_.outCurr_, psu_.outCurr_);
@@ -122,7 +122,7 @@ void FreeTheSun::applyAdjustment() {
   newDesiredCurr_ = 0;
 }
 
-void FreeTheSun::loop() {
+void Solar::loop() {
   uint32_t now = millis();
   if ((now - lastV) >= measperiod_) {
     int analogval = analogRead(pinInvolt_);
@@ -177,7 +177,7 @@ void FreeTheSun::loop() {
   }
 }
 
-void FreeTheSun::publishTask() {
+void Solar::publishTask() {
   doConnect();
   db_.client.loop();
   ignoreSubsUntil_ = millis() + 3000;
@@ -226,7 +226,7 @@ void FreeTheSun::publishTask() {
   }
 }
 
-void FreeTheSun::printStatus() {
+void Solar::printStatus() {
   Serial.println(str("%0.1fVin -> %0.2fWh <%0.1fV out %0.1fA %den> ", inVolt_, wh_, psu_.outVolt_, psu_.outCurr_, psu_.outEn_) + logme);
   logme = "";
 }

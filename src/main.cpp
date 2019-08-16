@@ -1,11 +1,11 @@
 #include <solar.h>
 
-FreeTheSun fts;
+Solar controller;
 
 // int main(int argc, char** argv) { }
 void setup() {
-  fts.setup();
+  controller.setup();
 }
 void loop() {
-  fts.loop();
+  controller.loop();
 }

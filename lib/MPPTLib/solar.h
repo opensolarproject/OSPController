@@ -12,9 +12,9 @@ struct DBConnection {
   int32_t period = 1000;
 };
 
-class FreeTheSun {
+class Solar {
 public:
-  FreeTheSun();
+  Solar();
   void setup();
   void loop();
   void publishTask();
