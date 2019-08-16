@@ -2,10 +2,7 @@
 
 # OSP Controller ☀️🕹
 
-I want to enable everyone in the world to _run their own transportation_ all from solar power with smaller, smarter, and more extensible solar power systems.. And so here you have it. 
-
-[The wiki](https://github.com/opensolarproject/OSPController/wiki) is where I've got your up-to-date [how-to](https://github.com/opensolarproject/OSPController/wiki), [parts list](https://github.com/opensolarproject/OSPController/wiki/Step-1%3A-Parts-List), [about](https://github.com/opensolarproject/OSPController/wiki/About), etc.
-
+_DC -> DC -> DC_ Solar. With a single used solar panel, a few used batteries, and $40 in parts you can power your life, transportation and all. Add an ESP32 Arduino to a 95% efficient DC-DC buck converter controlled over serial and you get an internet-connected, privately hosted smart solar MPPT power system. [Parts list](https://github.com/opensolarproject/OSPController/wiki/Step-1%3A-Parts-List). [Instructions](https://github.com/opensolarproject/OSPController/wiki). [About](https://github.com/opensolarproject/OSPController/wiki/About). Go build one! (And reach out! I'm happy to help)
 <br clear="both"/>
 
 ### This solar controller:
@@ -18,8 +15,10 @@ I want to enable everyone in the world to _run their own transportation_ all fro
 - Gives you [graphs and charts](https://github.com/opensolarproject/OSPController/wiki/Step-4:-Data-Visualization) about your system from anywhere
 
 ### But really, head over [to the wiki](https://github.com/opensolarproject/OSPController/wiki) for 
+
 - [Background & About](https://github.com/opensolarproject/OSPController/wiki/About)
-- [How-tos](https://github.com/opensolarproject/OSPController/wiki)
-- [Build steps](https://github.com/opensolarproject/OSPController/wiki/Step-2%3A-Hardware-Build)
-- [Parts lists](https://github.com/opensolarproject/OSPController/wiki/Step-1%3A-Parts-List)
-- [Setup instructions](https://github.com/opensolarproject/OSPController/wiki/Step-3%3A-Software-Setup)
+- [Part 1:Parts](https://github.com/opensolarproject/OSPController/wiki/Step-1%3A-Parts-List)
+- [Part 2:Hardware](https://github.com/opensolarproject/OSPController/wiki/Step-2%3A-Hardware-Build)
+- [Part 3:Software](https://github.com/opensolarproject/OSPController/wiki/Step-3%3A-Software-Setup)
+- [Part 4:Data](https://github.com/opensolarproject/OSPController/wiki/Step-4%3A-Data-Visualization)
+- [Part 5:Wiring](https://github.com/opensolarproject/OSPController/wiki/Step-5%3A-Wiring-Things)
