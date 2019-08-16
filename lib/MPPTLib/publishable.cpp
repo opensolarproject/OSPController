@@ -1,5 +1,6 @@
 #include "publishable.h"
 #include "utils.h"
+#include <WiFi.h>
 #include <Arduino.h>
 #include <Preferences.h>
 
@@ -13,6 +14,7 @@ struct Pub : PubItem {
   void const* val() const override { return value; }
   void save(Preferences&p) override { p.putBytes(key.c_str(), value, sizeof(*value)); }
   void load(Preferences&p) override { p.getBytes(key.c_str(), value, sizeof(*value)); }
+  bool isAction() const override { return false; }
 };
 
 template<> String Pub<bool* >::toString() const { return (*value)? "true":"false"; }
@@ -20,7 +22,8 @@ template<> String Pub<Action>::toString() const { return (value)(""); }
 template<> String Pub<bool* >::set(String v) { (*value) = v=="on" || v=="true" || v=="1"; return toString(); }
 template<> String Pub<Action>::set(String v) { return (value)(v); }
 template<> void const* Pub<Action>::val() const { return &value; }
-  
+
+template<> bool Pub<Action>::isAction()const { return true; }
 template<> void Pub<Action>::save(Preferences&p) { }
 template<> void Pub<Action>::load(Preferences&p) { }
 template<> String Pub<String*>::set(String v) { return (*value) = v; }
@@ -40,14 +43,8 @@ Publishable::Publishable() {
   add("load", [this](String s){
     return str("loaded %d prefs", this->loadPrefs());
   }).hide();
-  Action a = [this](String s){
-    String ret = "help:";
-    for (auto i : items_)
-      ret += "\n- " + i.first + " = " + i.second->toString();
-    return ret;
-  };
-  add("help", a).hide();
-  add("list", a).hide();
+  add("help", [this](String s){ printHelp(); return ""; }).hide();
+  add("list", [this](String s){ printHelp(); return ""; }).hide();
 }
 
 PubItem& Publishable::add(PubItem* p) { items_[p->key] = p; return *p; }
@@ -129,6 +126,19 @@ void Publishable::poll(Stream* stream) {
     while (stream->available())
       stream->read();
   }
+}
+
+void Publishable::printHelp() const {
+  Serial.println("help:");
+  std::list<PubItem const*> sorted;
+  for (auto i : items_)
+    if (i.second->pref_) sorted.push_front(i.second);
+    else sorted.push_back(i.second);
+  for (auto i : sorted)
+    if (i->isAction()) Serial.println("- " + i->key + " [action]");
+    else Serial.println("- " + i->key + " = " + i->toString());
+  if (WiFi.isConnected())
+    Serial.println("** IP: " + WiFi.localIP().toString());
 }
 
 String Publishable::toJson() const {

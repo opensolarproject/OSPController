@@ -26,6 +26,7 @@ struct PubItem {
   virtual void load(Preferences&) = 0;
   virtual PubItem& pref() { pref_ = true; return *this; }
   virtual PubItem& hide() { hidden_ = true; return *this; }
+  virtual bool isAction() const = 0;
 };
 
 class Publishable {
@@ -52,6 +53,7 @@ public:
   void setDirty(void const*);
   void setDirty(std::list<String>);
   void clearDirty();
+  void printHelp() const;
 
 
 private:
