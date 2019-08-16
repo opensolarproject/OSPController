@@ -9,10 +9,10 @@ FreeTheSun::FreeTheSun() :
         server_(80),
         pub_() { }
 
-void runLoop(void*c) { ((FreeTheSun*)c)->loopTask(); }
+// void runLoop(void*c) { ((FreeTheSun*)c)->loopTask(); }
 void runPubt(void*c) { ((FreeTheSun*)c)->publishTask(); }
 
-void FreeTheSun::run() {
+void FreeTheSun::setup() {
   Serial.begin(115200);
   Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
   delay(100);
@@ -66,7 +66,7 @@ void FreeTheSun::run() {
   psu_.doUpdate();
 
   //fn, name, stack size, parameter, priority, handle
-  xTaskCreate(runLoop,    "loop", 10000, this, 1, NULL);
+  // xTaskCreate(runLoop,    "loop", 10000, this, 1, NULL);
   xTaskCreate(runPubt, "publish", 10000, this, 1, NULL);
   Serial.println("finished setup");
 }
@@ -80,6 +80,7 @@ void FreeTheSun::doConnect() {
       WiFi.setHostname(hostname.c_str());
       if (WiFi.waitForConnectResult() == WL_CONNECTED) {
         Serial.println("Wifi connected! hostname: " + hostname);
+        Serial.println("IP: " + WiFi.localIP().toString());
         MDNS.begin("mppt");
         MDNS.addService("http", "tcp", 80);
         server_.begin();
@@ -121,7 +122,7 @@ void FreeTheSun::applyAdjustment() {
   newDesiredCurr_ = 0;
 }
 
-void FreeTheSun::loopTask() {
+void FreeTheSun::loop() {
   uint32_t now = millis();
   if ((now - lastV) >= measperiod_) {
     int analogval = analogRead(pinInvolt_);

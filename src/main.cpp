@@ -4,6 +4,8 @@ FreeTheSun fts;
 
 // int main(int argc, char** argv) { }
 void setup() {
-    fts.run();
+  fts.setup();
 }
-void loop() { }
+void loop() {
+  fts.loop();
+}

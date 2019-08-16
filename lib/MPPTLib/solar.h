@@ -9,14 +9,14 @@ struct DBConnection {
   String serv, user, pass, feed;
   //TODO support set of allowed keys
   PubSubClient client;
-  int32_t period;
+  int32_t period = 1000;
 };
 
 class FreeTheSun {
 public:
   FreeTheSun();
-  void run();
-  void loopTask();
+  void setup();
+  void loop();
   void publishTask();
   void doConnect();
   void applyAdjustment();
