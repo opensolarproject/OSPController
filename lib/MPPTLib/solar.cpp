@@ -4,10 +4,14 @@
 #include <ESPmDNS.h>
 #include <Update.h>
 
+WiFiClient espClient;
+
 Solar::Solar() :
-        psu_(Serial1),
+        psu_(Serial2),
         server_(80),
-        pub_() { }
+        pub_() {
+  db_.client.setClient(espClient);
+}
 
 // void runLoop(void*c) { ((Solar*)c)->loopTask(); }
 void runPubt(void*c) { ((Solar*)c)->publishTask(); }
@@ -111,7 +115,7 @@ String logme;
 void Solar::applyAdjustment() {
   if (newDesiredCurr_ > 0) {
     if (psu_.setCurrent(newDesiredCurr_))
-      logme += str("[adjusting %0.1fA (from %0.1fA)] ", newDesiredCurr_ - psu_.outCurr_, psu_.outCurr_);
+      logme += str("[adjusting %0.2fA (from %0.2fA)] ", newDesiredCurr_ - psu_.outCurr_, psu_.outCurr_);
     else Serial.println("error setting current");
     psu_.readCurrent();
     pub_.setDirty({"outcurr", "outpower"});
@@ -227,6 +231,6 @@ void Solar::publishTask() {
 }
 
 void Solar::printStatus() {
-  Serial.println(str("%0.1fVin -> %0.2fWh <%0.1fV out %0.1fA %den> ", inVolt_, wh_, psu_.outVolt_, psu_.outCurr_, psu_.outEn_) + logme);
+  Serial.println(str("%0.1fVin -> %0.2fWh <%0.2fV out %0.2fA %den> ", inVolt_, wh_, psu_.outVolt_, psu_.outCurr_, psu_.outEn_) + logme);
   logme = "";
 }
