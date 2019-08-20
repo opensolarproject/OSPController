@@ -225,9 +225,11 @@ void Solar::loop() {
     }
     lastPSUpdate_ = now;
   }
-  if (autoStart_ && autoSweep_ > 0 && (now - lastAutoSweep_) >= (autoSweep_ * 1000) && (now > autoSweep_*1000)) {
-    Serial.printf("Starting AUTO-SWEEP (last run %0.1f mins ago)\n", (now - lastAutoSweep_)/1000.0/60.0);
-    startSweep();
+  if (autoStart_ && autoSweep_ > 0 && (now - lastAutoSweep_) >= (autoSweep_ * 1000)) {
+    if (psu_.outEn_ && now > autoSweep_*1000) { //skip this sweep if disabled or just started up
+      Serial.printf("Starting AUTO-SWEEP (last run %0.1f mins ago)\n", (now - lastAutoSweep_)/1000.0/60.0);
+      startSweep();
+    }
     lastAutoSweep_ = now;
   }
 }
