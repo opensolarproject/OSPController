@@ -48,7 +48,7 @@ void Solar::setup() {
   pub_.add("measperiod", measperiod_     ).pref();
   pub_.add("involt",  inVolt_);
   pub_.add("wh",      wh_    );
-  pub_.add("collapses",  collapses_);
+  pub_.add("collapses", [=](String) { return String(getCollapses()); });
   pub_.add("connect",[=](String s){ doConnect(); return "connected"; }).hide();
   pub_.add("disconnect",[=](String s){ db_.client.disconnect(); WiFi.disconnect(); return "dissed"; }).hide();
   pub_.add("restart",[](String s){ ESP.restart(); return ""; }).hide();
@@ -107,24 +107,28 @@ void Solar::doConnect() {
 }
 
 uint32_t lastV = 0, lastpub = 20000, lastLog_ = 0;
-uint32_t lastPSUpdate_ = 0, lastPSUadjust_ = 1000, lastCollapseReset_ = 0;
-double newDesiredCurr_ = 0, lastCurr_ = 0;
+uint32_t lastPSUpdate_ = 0, lastPSUadjust_ = 1000;
+double newDesiredCurr_ = 0;
 bool needsQuickAdj_ = false;
 String logme;
 
 void Solar::applyAdjustment() {
-  if (newDesiredCurr_ > 0) {
+  if (newDesiredCurr_ != psu_.limitCurr_) {
     if (psu_.setCurrent(newDesiredCurr_))
-      logme += str("[adjusting %0.2fA (from %0.2fA)] ", newDesiredCurr_ - psu_.outCurr_, psu_.outCurr_);
+      logme += str("[adjusting %0.2fA (from %0.2fA)] ", newDesiredCurr_ - psu_.limitCurr_, psu_.limitCurr_);
     else Serial.println("error setting current");
     psu_.readCurrent();
     pub_.setDirty({"outcurr", "outpower"});
-    if (needsQuickAdj_)
-      needsQuickAdj_ = false;
+    needsQuickAdj_ = false;
     printStatus();
   }
-  newDesiredCurr_ = 0;
 }
+
+bool Solar::hasCollapsed() const {
+  return (psu_.outEn_ && inVolt_ < (psu_.outVolt_ * 3 / 2)); //voltage match method;
+}
+
+int Solar::getCollapses() const { return collapses_.size(); }
 
 void Solar::loop() {
   uint32_t now = millis();
@@ -148,14 +152,14 @@ void Solar::loop() {
   if ((now - lastPSUadjust_) >= (needsQuickAdj_? 100 : psuperiod_)) {
     if (setpoint_ > 0) {
       if (psu_.outEn_) {
-        if (!needsQuickAdj_) lastCurr_ = newDesiredCurr_; //only store stable values
         applyAdjustment();
       }
-      if (psu_.outEn_ && inVolt_ < (psu_.outVolt_ * 3 / 2)) { //collapse detection
-        newDesiredCurr_ = lastCurr_ * 2 / 3;
-        ++collapses_;
+
+      if (hasCollapsed()) {
+        newDesiredCurr_ = psu_.limitCurr_ * 0.80; //restore at 80% of previous point
+        collapses_.push_back(now);
+        pub_.setDirty("collapses");
         needsQuickAdj_ = false;
-        pub_.setDirty(&collapses_);
         Serial.printf("collapsed! %0.1fV set recovery to %0.1fA\n", inVolt_ ,newDesiredCurr_);
         psu_.enableOutput((psu_.outEn_ = false));
         psu_.setCurrent(newDesiredCurr_);
@@ -163,6 +167,11 @@ void Solar::loop() {
         Serial.println("restoring from collapse");
         psu_.enableOutput((psu_.outEn_ = true));
       }
+    }
+    if (collapses_.size() && (millis() - collapses_.front()) > (5 * 60000)) { //5m age
+      logme += str("[clear collapse %dms]", now - collapses_.front());
+      collapses_.pop_front();
+      pub_.setDirty("collapses");
     }
     lastPSUadjust_ = now;
   }
@@ -220,11 +229,6 @@ void Solar::publishTask() {
         doConnect();
       }
       lastpub = now;
-    }
-    if ((now - lastCollapseReset_) >= 60000) {
-      collapses_ = 0;
-      pub_.setDirty(&collapses_);
-      lastCollapseReset_ = now;
     }
     db_.client.loop();
     pub_.poll(&Serial);

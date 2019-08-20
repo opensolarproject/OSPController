@@ -79,7 +79,10 @@ String PowerSupply::cmdReply(String cmd) {
 
 bool PowerSupply::enableOutput(bool status) {
   String r = cmdReply(str("awo%d\r\n", status ? 1 : 0));
-  return (r == "#wook");
+  if (r == "#wook") {
+    outEn_ = status;
+    return true;
+  } else return false;
 }
 
 String PowerSupply::fourCharStr(uint16_t input) {
@@ -91,11 +94,13 @@ String PowerSupply::fourCharStr(uint16_t input) {
 }
 
 bool PowerSupply::setVoltage(float v) {
+  limitVolt_ = v;
   String r = cmdReply("awu" + fourCharStr(v * 100.0));
   return (r == "#wuok");
 }
 
 bool PowerSupply::setCurrent(float v) {
+  limitCurr_ = v;
   String r = cmdReply("awi" + fourCharStr(v * 100.0));
   return (r == "#wiok");
 }

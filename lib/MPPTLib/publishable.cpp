@@ -17,6 +17,7 @@ struct Pub : PubItem {
   bool isAction() const override { return false; }
 };
 
+template<> String Pub<double*>::toString() const { return String(*value, 3); }
 template<> String Pub<bool* >::toString() const { return (*value)? "true":"false"; }
 template<> String Pub<Action>::toString() const { return (value)(""); }
 template<> String Pub<bool* >::set(String v) { (*value) = v=="on" || v=="true" || v=="1"; return toString(); }
@@ -106,13 +107,17 @@ std::list<PubItem const*> Publishable::items(bool dirtyOnly) const {
 }
 
 void Publishable::clearDirty() { for (auto &i : items_) i.second->dirty_ = false; }
-void Publishable::setDirty(String key) { auto it = items_.find(key); if (it != items_.end()) it->second->dirty_ = true; }
 void Publishable::setDirty(std::list<String>dlist) { for (auto i : dlist) setDirty(i); }
+void Publishable::setDirty(String key) {
+  auto it = items_.find(key);
+  if (it != items_.end()) it->second->dirty_ = true;
+  else Serial.println("Pub::setDirty missing key" + key);
+}
 void Publishable::setDirty(void const* v) {
   for (const auto & i : items_)
     if (v == i.second->val())
       { i.second->dirty_ = true; return; }
-  Serial.printf("Pub::setDirty missing addr %P\n", v);
+  Serial.printf("Pub::setDirty missing addr %X\n", v);
 }
 
 void Publishable::poll(Stream* stream) {

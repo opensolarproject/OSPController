@@ -21,11 +21,13 @@ public:
   void doConnect();
   void applyAdjustment();
   void printStatus();
+  bool hasCollapsed() const;
+  int getCollapses() const;
 
   uint8_t pinInvolt_ = 36;
   float inVolt_ = 0, wh_ = 0;
   double setpoint_ = 0, pgain_ = 0.1;
-  int collapses_ = 0; //collapses, reset every.. minute?
+  std::list<uint32_t> collapses_;
   int measperiod_ = 200, printPeriod_ = 1000, psuperiod_ = 2000;
   float vadjust_ = 116.50;
   bool autoStart_ = false;
