@@ -16,7 +16,7 @@ Solar::Solar() :
 // void runLoop(void*c) { ((Solar*)c)->loopTask(); }
 void runPubt(void*c) { ((Solar*)c)->publishTask(); }
 
-//TODO make these statics members instead
+//TODO: make these statics members instead
 uint32_t lastV = 0, lastpub = 20000, lastLog_ = 0;
 uint32_t lastPSUpdate_ = 0, lastPSUadjust_ = 1000;
 uint32_t lastAutoSweep_ = 0;
@@ -139,8 +139,6 @@ void Solar::doSweepStep() {
 
   if (sweepPoints_.empty() || (psu_.outCurr_ > sweepPoints_.back().i))
     sweepPoints_.push_back({v: inVolt_, i: psu_.outCurr_});
-  if (sweepPoints_.size() > 8) //keep last N max points, more = further-back = more stable
-    sweepPoints_.pop_front();
 
   if (hasCollapsed()) {
     sweeping_ = false;
@@ -149,8 +147,9 @@ void Solar::doSweepStep() {
       VI mp = sweepPoints_.front(); //furthest back point
       Serial.printf("SWEEP DONE. c=%0.3f v=%0.3f, (setpoint was %0.3f)\n", mp.i, mp.v, setpoint_);
       psu_.enableOutput((psu_.outEn_ = false));
-      psu_.setCurrent(mp.i * 0.90);
+      psu_.setCurrent(mp.i * 0.95);
       setpoint_ = mp.v; //+stability offset?
+      pub_.setDirtyAddr(&setpoint_);
     } else Serial.println("SWEEP DONE, no points?!");
     sweepPoints_.clear();
     autoStart_ = true; //main output will be enabled below by autostart logic
@@ -190,7 +189,7 @@ void Solar::loop() {
         applyAdjustment();
 
       if (hasCollapsed()) {
-        newDesiredCurr_ = max(psu_.limitCurr_ * 0.90, 0.00); //restore at 90% of previous point
+        newDesiredCurr_ = max(psu_.limitCurr_ * 0.95, 0.00); //restore at 90% of previous point
         collapses_.push_back(now);
         pub_.setDirty("collapses");
         needsQuickAdj_ = false;
@@ -203,10 +202,10 @@ void Solar::loop() {
       }
     }
     if (collapses_.size() && (millis() - collapses_.front()) > (5 * 60000)) { //5m age
-      logme += str("[clear collapse (%ds ago)]", (now - collapses_.front())/1000);
-      collapses_.pop_front();
+      logme += str("[clear collapse (%ds ago)]", (now - collapses_.pop_front())/1000);
       pub_.setDirty("collapses");
     }
+    heap_caps_check_integrity_all(true);
     lastPSUadjust_ = now;
   }
   if ((now - lastLog_) >= printPeriod_) {
@@ -225,7 +224,8 @@ void Solar::loop() {
     }
     lastPSUpdate_ = now;
   }
-  if (autoStart_ && autoSweep_ > 0 && (now - lastAutoSweep_) >= (autoSweep_ * 1000)) {
+  bool forceSweep = (getCollapses() > 2) && (now - lastAutoSweep_) >= (20000);//20s max
+  if (autoStart_ && autoSweep_ > 0 && ((now - lastAutoSweep_) >= (autoSweep_ * 1000) || forceSweep)) {
     if (psu_.outEn_ && now > autoSweep_*1000) { //skip this sweep if disabled or just started up
       Serial.printf("Starting AUTO-SWEEP (last run %0.1f mins ago)\n", (now - lastAutoSweep_)/1000.0/60.0);
       startSweep();
@@ -269,6 +269,7 @@ void Solar::publishTask() {
         logme += "[pub disconnected] ";
         doConnect();
       }
+      heap_caps_check_integrity_all(true);
       lastpub = now;
     }
     db_.client.loop();
