@@ -50,7 +50,7 @@ public:
   bool clearPrefs();
   std::list<PubItem const*> items(bool dirtyOnly=true) const;
   void setDirty(String key);
-  void setDirty(void const*);
+  void setDirtyAddr(void const*);
   void setDirty(std::list<String>);
   void clearDirty();
   void printHelp() const;

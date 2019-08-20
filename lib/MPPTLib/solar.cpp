@@ -16,6 +16,14 @@ Solar::Solar() :
 // void runLoop(void*c) { ((Solar*)c)->loopTask(); }
 void runPubt(void*c) { ((Solar*)c)->publishTask(); }
 
+//TODO make these statics members instead
+uint32_t lastV = 0, lastpub = 20000, lastLog_ = 0;
+uint32_t lastPSUpdate_ = 0, lastPSUadjust_ = 1000;
+uint32_t lastAutoSweep_ = 0;
+double newDesiredCurr_ = 0;
+bool needsQuickAdj_ = false;
+String logme;
+
 void Solar::setup() {
   Serial.begin(115200);
   Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
@@ -46,6 +54,7 @@ void Solar::setup() {
   pub_.add("pubperiod",  db_.period      ).pref();
   pub_.add("PSUperiod",  psuperiod_      ).pref();
   pub_.add("measperiod", measperiod_     ).pref();
+  pub_.add("autosweep",  autoSweep_      ).pref();
   pub_.add("involt",  inVolt_);
   pub_.add("wh",      wh_    );
   pub_.add("collapses", [=](String) { return String(getCollapses()); });
@@ -65,6 +74,7 @@ void Solar::setup() {
     server_.send(200, "application/json", ret.c_str());
   });
   pub_.loadPrefs();
+  lastAutoSweep_ = millis() + autoSweep_;
   // wifi & mqtt is connected by pubsubConnect below
 
   psu_.flush();
@@ -107,12 +117,6 @@ void Solar::doConnect() {
   } else Serial.printf("can't pub connect, wifi %d pub %d\n", WiFi.isConnected(), db_.client.connected());
 }
 
-uint32_t lastV = 0, lastpub = 20000, lastLog_ = 0;
-uint32_t lastPSUpdate_ = 0, lastPSUadjust_ = 1000;
-double newDesiredCurr_ = 0;
-bool needsQuickAdj_ = false;
-String logme;
-
 void Solar::applyAdjustment() {
   if (newDesiredCurr_ != psu_.limitCurr_) {
     if (psu_.setCurrent(newDesiredCurr_))
@@ -131,7 +135,7 @@ void Solar::startSweep() {
 }
 
 void Solar::doSweepStep() {
-  newDesiredCurr_ += 0.01; //TODO maybe add a pref for sweep speed or use pgain?
+  newDesiredCurr_ = psu_.limitCurr_ + 0.02; //TODO maybe add a pref for sweep speed or use pgain?
   applyAdjustment();
 
   if (sweepPoints_.empty() || (psu_.outCurr_ > sweepPoints_.back().i))
@@ -150,7 +154,8 @@ void Solar::doSweepStep() {
       setpoint_ = mp.v; //+stability offset?
     } else Serial.println("SWEEP DONE, no points?!");
     sweepPoints_.clear();
-    autoStart_ = true; //will be enabled below by autostart logic
+    autoStart_ = true; //main output will be enabled below by autostart logic
+    lastAutoSweep_ = millis();
   }
 }
 
@@ -165,7 +170,7 @@ void Solar::loop() {
   if ((now - lastV) >= measperiod_) {
     int analogval = analogRead(pinInvolt_);
     inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
-    pub_.setDirty(&inVolt_);
+    pub_.setDirtyAddr(&inVolt_);
     if (sweeping_) {
       doSweepStep();
     } else if (setpoint_ > 0 && psu_.outEn_) { //corrections enabled
@@ -200,7 +205,7 @@ void Solar::loop() {
       }
     }
     if (collapses_.size() && (millis() - collapses_.front()) > (5 * 60000)) { //5m age
-      logme += str("[clear collapse %dms]", now - collapses_.front());
+      logme += str("[clear collapse (%ds ago)]", (now - collapses_.front())/1000);
       collapses_.pop_front();
       pub_.setDirty("collapses");
     }
@@ -221,6 +226,11 @@ void Solar::loop() {
       //psu_.debug_ = true;
     }
     lastPSUpdate_ = now;
+  }
+  if (autoStart_ && autoSweep_ > 0 && (now - lastAutoSweep_) >= (autoSweep_ * 1000) && (now > autoSweep_*1000)) {
+    Serial.printf("Starting AUTO-SWEEP (last run %0.1f mins ago)\n", (now - lastAutoSweep_)/1000.0/60.0);
+    startSweep();
+    lastAutoSweep_ = now;
   }
 }
 

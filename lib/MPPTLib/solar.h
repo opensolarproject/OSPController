@@ -33,6 +33,7 @@ public:
   double setpoint_ = 0, pgain_ = 0.1;
   std::list<uint32_t> collapses_;
   int measperiod_ = 200, printPeriod_ = 1000, psuperiod_ = 2000;
+  int autoSweep_ = 10 * 60; //every 10m
   float vadjust_ = 116.50;
   bool autoStart_ = false;
   bool sweeping_ = false;

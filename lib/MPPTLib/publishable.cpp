@@ -113,7 +113,7 @@ void Publishable::setDirty(String key) {
   if (it != items_.end()) it->second->dirty_ = true;
   else Serial.println("Pub::setDirty missing key" + key);
 }
-void Publishable::setDirty(void const* v) {
+void Publishable::setDirtyAddr(void const* v) {
   for (const auto & i : items_)
     if (v == i.second->val())
       { i.second->dirty_ = true; return; }
