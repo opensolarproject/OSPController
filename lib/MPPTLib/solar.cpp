@@ -49,6 +49,7 @@ void Solar::setup() {
   pub_.add("involt",  inVolt_);
   pub_.add("wh",      wh_    );
   pub_.add("collapses", [=](String) { return String(getCollapses()); });
+  pub_.add("sweep",[=](String){ startSweep(); return "starting sweep"; }).hide();
   pub_.add("connect",[=](String s){ doConnect(); return "connected"; }).hide();
   pub_.add("disconnect",[=](String s){ db_.client.disconnect(); WiFi.disconnect(); return "dissed"; }).hide();
   pub_.add("restart",[](String s){ ESP.restart(); return ""; }).hide();
@@ -124,6 +125,35 @@ void Solar::applyAdjustment() {
   }
 }
 
+void Solar::startSweep() {
+  Serial.printf("SWEEP START c=%0.3f, (setpoint was %0.3f)\n", newDesiredCurr_, setpoint_);
+  sweeping_ = true;
+}
+
+void Solar::doSweepStep() {
+  newDesiredCurr_ += 0.01; //TODO maybe add a pref for sweep speed or use pgain?
+  applyAdjustment();
+
+  if (sweepPoints_.empty() || (psu_.outCurr_ > sweepPoints_.back().i))
+    sweepPoints_.push_back({v: inVolt_, i: psu_.outCurr_});
+  if (sweepPoints_.size() > 5) //keep last N max points
+    sweepPoints_.pop_front();
+
+  if (hasCollapsed()) {
+    sweeping_ = false;
+    printStatus();
+    if (sweepPoints_.size()) {
+      VI mp = sweepPoints_.front(); //furthest back point
+      Serial.printf("SWEEP DONE. c=%0.3f v=%0.3f, (setpoint was %0.3f)\n", mp.i, mp.v, setpoint_);
+      psu_.enableOutput((psu_.outEn_ = false));
+      psu_.setCurrent(mp.i * 0.90);
+      setpoint_ = mp.v; //+stability offset?
+    } else Serial.println("SWEEP DONE, no points?!");
+    sweepPoints_.clear();
+    autoStart_ = true; //will be enabled below by autostart logic
+  }
+}
+
 bool Solar::hasCollapsed() const {
   return (psu_.outEn_ && inVolt_ < (psu_.outVolt_ * 3 / 2)); //voltage match method;
 }
@@ -136,11 +166,13 @@ void Solar::loop() {
     int analogval = analogRead(pinInvolt_);
     inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
     pub_.setDirty(&inVolt_);
-    if (setpoint_ > 0 && psu_.outEn_) { //corrections enabled
+    if (sweeping_) {
+      doSweepStep();
+    } else if (setpoint_ > 0 && psu_.outEn_) { //corrections enabled
       double error = inVolt_ - setpoint_;
       double dcurr = constrain(error * pgain_, -3, 1); //limit ramping speed
       if (error > 0.3 || (-error > 0.2)) { //adjustment deadband, more sensitive when needing to ramp down
-        newDesiredCurr_ = psu_.outCurr_ + dcurr;
+        newDesiredCurr_ = psu_.limitCurr_ + dcurr;
         if (error < 0.6) { //ramp down, quick!
           logme += "[QUICK] ";
           needsQuickAdj_ = true;
@@ -150,10 +182,9 @@ void Solar::loop() {
     lastV = millis();
   }
   if ((now - lastPSUadjust_) >= (needsQuickAdj_? 100 : psuperiod_)) {
-    if (setpoint_ > 0) {
-      if (psu_.outEn_) {
+    if (setpoint_ > 0 && !sweeping_) {
+      if (psu_.outEn_)
         applyAdjustment();
-      }
 
       if (hasCollapsed()) {
         newDesiredCurr_ = psu_.limitCurr_ * 0.80; //restore at 80% of previous point

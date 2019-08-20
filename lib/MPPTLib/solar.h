@@ -12,6 +12,8 @@ struct DBConnection {
   int32_t period = 1000;
 };
 
+struct VI { double v, i; };
+
 class Solar {
 public:
   Solar();
@@ -21,6 +23,8 @@ public:
   void doConnect();
   void applyAdjustment();
   void printStatus();
+  void startSweep();
+  void doSweepStep();
   bool hasCollapsed() const;
   int getCollapses() const;
 
@@ -31,6 +35,8 @@ public:
   int measperiod_ = 200, printPeriod_ = 1000, psuperiod_ = 2000;
   float vadjust_ = 116.50;
   bool autoStart_ = false;
+  bool sweeping_ = false;
+  std::list<VI> sweepPoints_;
   String wifiap, wifipass;
   uint32_t ignoreSubsUntil_ = 0;
 
