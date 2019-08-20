@@ -28,6 +28,13 @@ String str(bool v) {
 
 PowerSupply::PowerSupply(Stream &port) : _port(&port), debug_(false) { }
 
+bool PowerSupply::begin() {
+  flush();
+  return handleReply(cmdReply("rc")) && //read current limit
+         handleReply(cmdReply("rv")) && //read voltage limit
+         doUpdate();
+}
+
 bool PowerSupply::doUpdate() {
   return readVoltage() && 
          readCurrent() &&
@@ -45,6 +52,8 @@ bool PowerSupply::handleReply(String msg) {
   if      (hdr == "#ro") outEn_ = (body.toInt() == 1);
   else if (hdr == "#ru") outVolt_ = body.toFloat() / 100.0;
   else if (hdr == "#ri") outCurr_ = body.toFloat() / 100.0;
+  else if (hdr == "#rv") limitVolt_ = body.toFloat() / 100.0;
+  else if (hdr == "#ra") limitCurr_ = body.toFloat() / 100.0;
   else {
     Serial.println("got unknown msg > '" + hdr + "' / '" + body + "'");
     return false;

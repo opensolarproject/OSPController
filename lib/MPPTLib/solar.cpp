@@ -77,8 +77,7 @@ void Solar::setup() {
   lastAutoSweep_ = millis() + autoSweep_;
   // wifi & mqtt is connected by pubsubConnect below
 
-  psu_.flush();
-  psu_.doUpdate();
+  psu_.begin();
 
   //fn, name, stack size, parameter, priority, handle
   // xTaskCreate(runLoop,    "loop", 10000, this, 1, NULL);
@@ -140,7 +139,7 @@ void Solar::doSweepStep() {
 
   if (sweepPoints_.empty() || (psu_.outCurr_ > sweepPoints_.back().i))
     sweepPoints_.push_back({v: inVolt_, i: psu_.outCurr_});
-  if (sweepPoints_.size() > 5) //keep last N max points
+  if (sweepPoints_.size() > 8) //keep last N max points, more = further-back = more stable
     sweepPoints_.pop_front();
 
   if (hasCollapsed()) {
@@ -192,7 +191,7 @@ void Solar::loop() {
         applyAdjustment();
 
       if (hasCollapsed()) {
-        newDesiredCurr_ = psu_.limitCurr_ * 0.80; //restore at 80% of previous point
+        newDesiredCurr_ = max(psu_.limitCurr_ * 0.90, 0.00); //restore at 90% of previous point
         collapses_.push_back(now);
         pub_.setDirty("collapses");
         needsQuickAdj_ = false;

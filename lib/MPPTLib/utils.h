@@ -10,6 +10,7 @@ class PowerSupply {
     bool outEn_ = false;
 
     PowerSupply(Stream &port);
+    bool begin();
 
     String cmdReply(String cmd);
     bool setVoltage(float);
