@@ -74,7 +74,6 @@ void Solar::setup() {
     server_.send(200, "application/json", ret.c_str());
   });
   pub_.loadPrefs();
-  lastAutoSweep_ = millis() + autoSweep_;
   // wifi & mqtt is connected by pubsubConnect below
 
   psu_.begin();
@@ -131,6 +130,7 @@ void Solar::applyAdjustment() {
 void Solar::startSweep() {
   Serial.printf("SWEEP START c=%0.3f, (setpoint was %0.3f)\n", newDesiredCurr_, setpoint_);
   sweeping_ = true;
+  lastAutoSweep_ = millis();
 }
 
 void Solar::doSweepStep() {
@@ -154,7 +154,6 @@ void Solar::doSweepStep() {
     } else Serial.println("SWEEP DONE, no points?!");
     sweepPoints_.clear();
     autoStart_ = true; //main output will be enabled below by autostart logic
-    lastAutoSweep_ = millis();
   }
 }
 
