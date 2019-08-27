@@ -55,6 +55,7 @@ void Solar::setup() {
   pub_.add("PSUperiod",  psuperiod_      ).pref();
   pub_.add("measperiod", measperiod_     ).pref();
   pub_.add("autosweep",  autoSweep_      ).pref();
+  pub_.add("currentcap", currentCap_     ).pref();
   pub_.add("involt",  inVolt_);
   pub_.add("wh",      wh_    );
   pub_.add("collapses", [=](String) { return String(getCollapses()); });
@@ -135,6 +136,13 @@ void Solar::startSweep() {
 
 void Solar::doSweepStep() {
   newDesiredCurr_ = psu_.limitCurr_ + 0.02; //TODO maybe add a pref for sweep speed or use pgain?
+  if (newDesiredCurr_ >= currentCap_) {
+    setpoint_ = inVolt_ - 4 * pgain_;
+    newDesiredCurr_ = currentCap_;
+    sweeping_ = false;
+    Serial.printf("SWEEP DONE, currentcap reached (setpoint=%0.3f)\n", setpoint_);
+    return applyAdjustment();
+  }
   applyAdjustment();
 
   if (sweepPoints_.empty() || (psu_.outCurr_ > sweepPoints_.back().i))
@@ -174,7 +182,7 @@ void Solar::loop() {
       double error = inVolt_ - setpoint_;
       double dcurr = constrain(error * pgain_, -3, 2); //limit ramping speed
       if (error > 0.3 || (-error > 0.2)) { //adjustment deadband, more sensitive when needing to ramp down
-        newDesiredCurr_ = psu_.limitCurr_ + dcurr;
+        newDesiredCurr_ = min(psu_.limitCurr_ + dcurr, currentCap_);
         if (error < 0.6) { //ramp down, quick!
           logme += "[QUICK] ";
           needsQuickAdj_ = true;

@@ -45,15 +45,19 @@ bool PowerSupply::readVoltage() { return handleReply(cmdReply("aru")); }
 bool PowerSupply::readCurrent() { return handleReply(cmdReply("ari")); }
 bool PowerSupply::getOutputEnabled() { return handleReply(cmdReply("aro")); }
 
+template<typename T>void setCheck(T &save, float in, float max) {
+ if (in < max) save = in;
+}
+
 bool PowerSupply::handleReply(String msg) {
   if (!msg.length()) return false;
   String hdr = msg.substring(0, 3);
   String body = msg.substring(3);
-  if      (hdr == "#ro") outEn_ = (body.toInt() == 1);
-  else if (hdr == "#ru") outVolt_ = body.toFloat() / 100.0;
-  else if (hdr == "#ri") outCurr_ = body.toFloat() / 100.0;
-  else if (hdr == "#rv") limitVolt_ = body.toFloat() / 100.0;
-  else if (hdr == "#ra") limitCurr_ = body.toFloat() / 100.0;
+  if      (hdr == "#ro") setCheck(outEn_, (body.toInt() == 1), 2);
+  else if (hdr == "#ru") setCheck(outVolt_, body.toFloat() / 100.0, 80);
+  else if (hdr == "#ri") setCheck(outCurr_, body.toFloat() / 100.0, 15);
+  else if (hdr == "#rv") setCheck(limitVolt_, body.toFloat() / 100.0, 80);
+  else if (hdr == "#ra") setCheck(limitCurr_, body.toFloat() / 100.0, 15);
   else {
     Serial.println("got unknown msg > '" + hdr + "' / '" + body + "'");
     return false;
