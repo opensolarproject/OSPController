@@ -157,7 +157,7 @@ void Solar::doSweepStep() {
 }
 
 bool Solar::hasCollapsed() const {
-  return (psu_.outEn_ && inVolt_ < (psu_.outVolt_ * 3 / 2)); //voltage match method;
+  return (psu_.outEn_ && inVolt_ < (psu_.outVolt_ * 10 / 9)); //voltage match method;
 }
 
 int Solar::getCollapses() const { return collapses_.size(); }
@@ -172,7 +172,7 @@ void Solar::loop() {
       doSweepStep();
     } else if (setpoint_ > 0 && psu_.outEn_) { //corrections enabled
       double error = inVolt_ - setpoint_;
-      double dcurr = constrain(error * pgain_, -3, 1); //limit ramping speed
+      double dcurr = constrain(error * pgain_, -3, 2); //limit ramping speed
       if (error > 0.3 || (-error > 0.2)) { //adjustment deadband, more sensitive when needing to ramp down
         newDesiredCurr_ = psu_.limitCurr_ + dcurr;
         if (error < 0.6) { //ramp down, quick!
@@ -224,7 +224,7 @@ void Solar::loop() {
     }
     lastPSUpdate_ = now;
   }
-  bool forceSweep = (getCollapses() > 2) && (now - lastAutoSweep_) >= (20000);//20s max
+  bool forceSweep = (getCollapses() > 2) && (now - lastAutoSweep_) >= (autoSweep_ / 3.0 * 1000);
   if (autoStart_ && autoSweep_ > 0 && ((now - lastAutoSweep_) >= (autoSweep_ * 1000) || forceSweep)) {
     if (psu_.outEn_ && now > autoSweep_*1000) { //skip this sweep if disabled or just started up
       Serial.printf("Starting AUTO-SWEEP (last run %0.1f mins ago)\n", (now - lastAutoSweep_)/1000.0/60.0);
