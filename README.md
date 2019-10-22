@@ -5,6 +5,10 @@
 _DC -> DC -> DC_ Solar. With a single used solar panel, a few used batteries, and $40 in parts you can power your life, transportation and all. Add an ESP32 Arduino to a 95% efficient DC-DC buck converter controlled over serial and you get an internet-connected, privately hosted smart solar MPPT power system. [Parts list](https://github.com/opensolarproject/OSPController/wiki/Step-1%3A-Parts-List). [Instructions](https://github.com/opensolarproject/OSPController/wiki). [About](https://github.com/opensolarproject/OSPController/wiki/About). Go build one! (And reach out! I'm happy to help)
 <br clear="both"/>
 
+| ![dashboard view](https://raw.githubusercontent.com/wiki/opensolarproject/OSPController/images/charts2.png)  |
+:-------------------------:|
+| A dashboard view using the free adafruit.io IOT platform (optional) |
+
 ### This solar controller:
 - Costs less than $35 in [total parts](https://github.com/opensolarproject/OSPController/wiki/Step-1%3A-Parts-List)
 - Works with 12 - 82VDC Solar Panels, _(enabling big and efficient strings of panels!)_
