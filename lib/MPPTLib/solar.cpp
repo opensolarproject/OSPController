@@ -47,6 +47,7 @@ void Solar::setup() {
   pub_.add("outcurr", [=](String s){ if (s.length()) psu_.setCurrent(s.toFloat()); return String(psu_.outCurr_); });
   pub_.add("outpower",[=](String s){ return String(psu_.outVolt_ * psu_.outCurr_); });
   pub_.add("pgain",      pgain_          ).pref();
+  pub_.add("ramplimit",  ramplimit_      ).pref();
   pub_.add("setpoint",   setpoint_       ).pref();
   pub_.add("vadjust",    vadjust_        ).pref();
   pub_.add("autostart",  autoStart_      ).pref();
@@ -180,7 +181,7 @@ void Solar::loop() {
       doSweepStep();
     } else if (setpoint_ > 0 && psu_.outEn_) { //corrections enabled
       double error = inVolt_ - setpoint_;
-      double dcurr = constrain(error * pgain_, -3, 2); //limit ramping speed
+      double dcurr = constrain(error * pgain_, -ramplimit_ * 2, ramplimit_); //limit ramping speed
       if (error > 0.3 || (-error > 0.2)) { //adjustment deadband, more sensitive when needing to ramp down
         newDesiredCurr_ = min(psu_.limitCurr_ + dcurr, currentCap_);
         if (error < 0.6) { //ramp down, quick!

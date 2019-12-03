@@ -30,7 +30,7 @@ public:
 
   uint8_t pinInvolt_ = 32;
   float inVolt_ = 0, wh_ = 0;
-  double setpoint_ = 0, pgain_ = 0.1;
+  double setpoint_ = 0, pgain_ = 0.005, ramplimit_ = 2;
   double currentCap_ = 8.5;
   CircularArray<uint32_t, 32> collapses_;
   int measperiod_ = 200, printPeriod_ = 1000, psuperiod_ = 2000;
