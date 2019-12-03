@@ -28,7 +28,7 @@ public:
   bool hasCollapsed() const;
   int getCollapses() const;
 
-  uint8_t pinInvolt_ = 36;
+  uint8_t pinInvolt_ = 32;
   float inVolt_ = 0, wh_ = 0;
   double setpoint_ = 0, pgain_ = 0.1;
   double currentCap_ = 8.5;
