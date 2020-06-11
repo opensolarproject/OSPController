@@ -117,7 +117,7 @@ void Publishable::setDirtyAddr(void const* v) {
   for (const auto & i : items_)
     if (v == i.second->val())
       { i.second->dirty_ = true; return; }
-  Serial.printf("Pub::setDirty missing addr %X\n", v);
+  Serial.printf("Pub::setDirty missing addr %p\n", v);
 }
 
 void Publishable::poll(Stream* stream) {

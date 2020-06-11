@@ -29,7 +29,7 @@ void Solar::setup() {
   Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
   delay(100);
   uint64_t chipid = ESP.getEfuseMac();
-  Serial.printf("startup, ID %08X %04X\n", chipid, (uint16_t)(chipid >> 32));
+  Serial.printf("startup, ID %08llX %04X\n", chipid, (uint16_t)(chipid >> 32));
   Serial2.begin(4800, SERIAL_8N1, 16, 17, false, 1000);
   analogSetCycles(32);
 
@@ -106,13 +106,13 @@ void Solar::doConnect() {
     if (db_.serv.length() && db_.feed.length()) {
       Serial.println("Connecting MQTT to " + db_.user + "@" + db_.serv);
       db_.client.setServer(db_.serv.c_str(), 1883); //TODO split serv:port
-      if (db_.client.connect("MPPT", db_.user.c_str(), db_.pass.c_str()))
+      if (db_.client.connect("MPPT", db_.user.c_str(), db_.pass.c_str())) {
         Serial.println("PubSub connect success! " + db_.client.state());
         auto pubs = pub_.items(true);
         for (auto i : pubs)
           if (i->pref_)
-            db_.client.subscribe((db_.feed + "/prefs/" + i->key).c_str()); //subscribe to preference changes!
-      else Serial.println("PubSub connect ERROR! " + db_.client.state());
+            db_.client.subscribe((db_.feed + "/prefs/" + i->key).c_str()); //subscribe to preference changes
+      } else Serial.println("PubSub connect ERROR! " + db_.client.state());
     } else Serial.println("no MQTT user / pass / server / feed set up!");
   } else Serial.printf("can't pub connect, wifi %d pub %d\n", WiFi.isConnected(), db_.client.connected());
 }
