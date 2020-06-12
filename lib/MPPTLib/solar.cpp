@@ -67,7 +67,7 @@ void Solar::setup() {
   pub_.add("clear",[=](String s){ pub_.clearPrefs(); return "cleared"; }).hide();
 
   server_.on("/", HTTP_ANY, [=]() {
-    Serial.println("got req " + server_.uri() + " -> " + server_.hostHeader());
+    log("got req " + server_.uri() + " -> " + server_.hostHeader());
     String ret;
     for (int i = 0; i < server_.args(); i++)
       ret += pub_.handleSet(server_.argName(i), server_.arg(i)) + "\n";
@@ -121,7 +121,7 @@ void Solar::applyAdjustment() {
   if (newDesiredCurr_ != psu_.limitCurr_) {
     if (psu_.setCurrent(newDesiredCurr_))
       logme += str("[adjusting %0.2fA (from %0.2fA)] ", newDesiredCurr_ - psu_.limitCurr_, psu_.limitCurr_);
-    else Serial.println("error setting current");
+    else log("error setting current");
     psu_.readCurrent();
     pub_.setDirty({"outcurr", "outpower"});
     needsQuickAdj_ = false;
@@ -130,7 +130,7 @@ void Solar::applyAdjustment() {
 }
 
 void Solar::startSweep() {
-  Serial.printf("SWEEP START c=%0.3f, (setpoint was %0.3f)\n", newDesiredCurr_, setpoint_);
+  log(str("SWEEP START c=%0.3f, (setpoint was %0.3f)\n", newDesiredCurr_, setpoint_));
   sweeping_ = true;
   lastAutoSweep_ = millis();
 }
@@ -141,7 +141,7 @@ void Solar::doSweepStep() {
     setpoint_ = inVolt_ - 4 * pgain_;
     newDesiredCurr_ = currentCap_;
     sweeping_ = false;
-    Serial.printf("SWEEP DONE, currentcap reached (setpoint=%0.3f)\n", setpoint_);
+    log(str("SWEEP DONE, currentcap reached (setpoint=%0.3f)\n", setpoint_));
     return applyAdjustment();
   }
   applyAdjustment();
@@ -154,12 +154,12 @@ void Solar::doSweepStep() {
     printStatus();
     if (sweepPoints_.size()) {
       VI mp = sweepPoints_.front(); //furthest back point
-      Serial.printf("SWEEP DONE. c=%0.3f v=%0.3f, (setpoint was %0.3f)\n", mp.i, mp.v, setpoint_);
+      log(str("SWEEP DONE. c=%0.3f v=%0.3f, (setpoint was %0.3f)\n", mp.i, mp.v, setpoint_));
       psu_.enableOutput((psu_.outEn_ = false));
       psu_.setCurrent(mp.i * 0.95);
       setpoint_ = mp.v; //+stability offset?
       pub_.setDirtyAddr(&setpoint_);
-    } else Serial.println("SWEEP DONE, no points?!");
+    } else log("SWEEP DONE, no points?!");
     sweepPoints_.clear();
     autoStart_ = true; //main output will be enabled below by autostart logic
   }
@@ -202,11 +202,11 @@ void Solar::loop() {
         collapses_.push_back(now);
         pub_.setDirty("collapses");
         needsQuickAdj_ = false;
-        Serial.printf("collapsed! %0.1fV set recovery to %0.1fA\n", inVolt_ ,newDesiredCurr_);
+        log(str("collapsed! %0.1fV set recovery to %0.1fA\n", inVolt_ ,newDesiredCurr_));
         psu_.enableOutput((psu_.outEn_ = false));
         psu_.setCurrent(newDesiredCurr_);
       } else if (autoStart_ && !psu_.outEn_ && inVolt_ > (setpoint_ * 1.02)) {
-        Serial.println("restoring from collapse");
+        log("restoring from collapse");
         psu_.enableOutput((psu_.outEn_ = true));
       }
     }
@@ -227,7 +227,7 @@ void Solar::loop() {
       wh_ += psu_.outVolt_ * psu_.outCurr_ * (now - lastPSUpdate_) / 1000.0 / 60 / 60;
       pub_.setDirty({"outvolt", "outcurr", "outputEN", "wh", "outpower"});
     } else {
-      Serial.println("psu update fail");
+      log("psu update fail");
       psu_.flush();
       //psu_.debug_ = true;
     }
@@ -236,7 +236,7 @@ void Solar::loop() {
   bool forceSweep = (getCollapses() > 2) && (now - lastAutoSweep_) >= (autoSweep_ / 3.0 * 1000);
   if (autoStart_ && autoSweep_ > 0 && ((now - lastAutoSweep_) >= (autoSweep_ * 1000) || forceSweep)) {
     if (psu_.outEn_ && now > autoSweep_*1000) { //skip this sweep if disabled or just started up
-      Serial.printf("Starting AUTO-SWEEP (last run %0.1f mins ago)\n", (now - lastAutoSweep_)/1000.0/60.0);
+      log(str("Starting AUTO-SWEEP (last run %0.1f mins ago)\n", (now - lastAutoSweep_)/1000.0/60.0));
       startSweep();
     }
     lastAutoSweep_ = now;
@@ -249,15 +249,15 @@ void Solar::publishTask() {
   ignoreSubsUntil_ = millis() + 3000;
   db_.client.setCallback([=](char*topicbuf, uint8_t*buf, unsigned int len){
     String topic(topicbuf), val = str(std::string((char*)buf, len));
-    Serial.println("got sub value " + topic + " -> " + val);
+    log("got sub value " + topic + " -> " + val);
     if (topic == (db_.feed + "/wh")) {
       wh_ = val.toFloat();
-      Serial.println("restored wh value to " + val);
+      log("restored wh value to " + val);
       db_.client.unsubscribe((db_.feed + "/wh").c_str());
     } else if (millis() > ignoreSubsUntil_) { //don't load old values
       topic.replace(db_.feed + "/prefs/", ""); //replaces in-place, sadly
       String ret = pub_.handleSet(topic, val);
-      Serial.println("MQTT cmd: " + ret);
+      log("MQTT cmd: " + ret);
     }
   });
   db_.client.subscribe((db_.feed + "/wh").c_str());
@@ -281,6 +281,10 @@ void Solar::publishTask() {
       heap_caps_check_integrity_all(true);
       lastpub = now;
     }
+    if (db_.client.connected() && logPub_.size()) {
+      String s = logPub_.pop_front();
+      db_.client.publish((db_.feed + "/log").c_str(), s.c_str(), false);
+    }
     db_.client.loop();
     pub_.poll(&Serial);
     server_.handleClient();
@@ -292,3 +296,9 @@ void Solar::printStatus() {
   Serial.println(str("%0.1fVin -> %0.2fWh <%0.2fV out %0.2fA %den> ", inVolt_, wh_, psu_.outVolt_, psu_.outCurr_, psu_.outEn_) + logme);
   logme = "";
 }
+
+void Solar::log(String s) {
+  Serial.println(s);
+  logPub_.push_back(s);
+}
+

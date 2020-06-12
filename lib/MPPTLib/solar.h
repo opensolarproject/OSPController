@@ -28,6 +28,8 @@ public:
   bool hasCollapsed() const;
   int getCollapses() const;
 
+  void log(String s);
+
   uint8_t pinInvolt_ = 32;
   float inVolt_ = 0, wh_ = 0;
   double setpoint_ = 0, pgain_ = 0.005, ramplimit_ = 2;
@@ -39,6 +41,7 @@ public:
   bool autoStart_ = false;
   bool sweeping_ = false;
   CircularArray<VI, 8> sweepPoints_; //size here is important, larger == more stable setpoint
+  CircularArray<String, 8> logPub_;
   String wifiap, wifipass;
   uint32_t ignoreSubsUntil_ = 0;
 
