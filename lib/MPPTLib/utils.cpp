@@ -8,10 +8,10 @@ float mapfloat(long x, long in_min, long in_max, long out_min, long out_max) {
 
 
 String str(const char *fmtStr, ...) {
-  static char buf[200] = {'\0'};
+  static char buf[201] = {'\0'};
   va_list arg_ptr;
   va_start(arg_ptr, fmtStr);
-  vsprintf(buf, fmtStr, arg_ptr);
+  vsnprintf(buf, 200, fmtStr, arg_ptr);
   va_end(arg_ptr);
   return String(buf);
 }
@@ -45,9 +45,7 @@ bool PowerSupply::readVoltage() { return handleReply(cmdReply("aru")); }
 bool PowerSupply::readCurrent() { return handleReply(cmdReply("ari")); }
 bool PowerSupply::getOutputEnabled() { return handleReply(cmdReply("aro")); }
 
-template<typename T>void setCheck(T &save, float in, float max) {
- if (in < max) save = in;
-}
+template<typename T>void setCheck(T &save, float in, float max) { if (in < max) save = in; }
 
 bool PowerSupply::handleReply(String msg) {
   if (!msg.length()) return false;
