@@ -30,15 +30,18 @@ PowerSupply::PowerSupply(Stream &port) : _port(&port), debug_(false) { }
 
 bool PowerSupply::begin() {
   flush();
-  return handleReply(cmdReply("rc")) && //read current limit
-         handleReply(cmdReply("rv")) && //read voltage limit
-         doUpdate();
+  return doUpdate();
 }
 
 bool PowerSupply::doUpdate() {
-  return readVoltage() && 
+  bool res = readVoltage() &&
          readCurrent() &&
          getOutputEnabled();
+  if (res && !limitVolt_) {
+    handleReply(cmdReply("arc")); //read current limit
+    handleReply(cmdReply("arv")); //read voltage limit
+  }
+  return res;
 }
 
 bool PowerSupply::readVoltage() { return handleReply(cmdReply("aru")); }
@@ -69,6 +72,7 @@ void PowerSupply::flush() {
 
 String PowerSupply::cmdReply(String cmd) {
   _port->print(cmd + "\r\n");
+  if (debug_) Serial.println("> " + cmd + "CRLF");
   String reply;
   uint32_t start = millis();
   char c;
@@ -76,7 +80,6 @@ String PowerSupply::cmdReply(String cmd) {
     if (_port->readBytes(&c, 1))
       reply.concat(c);
   if (debug_ && reply.length()) {
-    Serial.println("> " + cmd + "CRLF");
     String debug = reply;
     debug.replace("\r", "CR");
     debug.replace("\n", "NL");

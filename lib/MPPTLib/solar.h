@@ -31,6 +31,7 @@ public:
   void log(String s);
   void backoff(String reason);
   void setState(const String state);
+  bool isSystemGood() const;
 
   String state_;
   uint8_t pinInvolt_ = 32;
@@ -39,13 +40,14 @@ public:
   double currentCap_ = 8.5;
   double currFilt_ = 0.0;
   CircularArray<uint32_t, 32> collapses_;
-  int measperiod_ = 200, printPeriod_ = 1000, psuperiod_ = 2000;
+  int measperiod_ = 200, printPeriod_ = 1000, adjustPeriod_ = 2000;
   int autoSweep_ = 10 * 60; //every 10m
   float vadjust_ = 116.50;
   CircularArray<VI, 8> sweepPoints_; //size here is important, larger == more stable setpoint
   CircularArray<String, 8> logPub_;
   String wifiap, wifipass;
   uint32_t ignoreSubsUntil_ = 0;
+  int8_t backoffLevel_ = 0;
 
   PowerSupply psu_;
   WebServer server_;

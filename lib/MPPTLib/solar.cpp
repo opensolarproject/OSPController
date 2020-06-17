@@ -55,7 +55,7 @@ void Solar::setup() {
   pub_.add("vadjust",    vadjust_        ).pref();
   pub_.add("printperiod",printPeriod_    ).pref();
   pub_.add("pubperiod",  db_.period      ).pref();
-  pub_.add("PSUperiod",  psuperiod_      ).pref();
+  pub_.add("adjustperiod",adjustPeriod_  ).pref();
   pub_.add("measperiod", measperiod_     ).pref();
   pub_.add("autosweep",  autoSweep_      ).pref();
   pub_.add("currentcap", currentCap_     ).pref();
@@ -67,6 +67,7 @@ void Solar::setup() {
   pub_.add("disconnect",[=](String s){ db_.client.disconnect(); WiFi.disconnect(); return "dissed"; }).hide();
   pub_.add("restart",[](String s){ ESP.restart(); return ""; }).hide();
   pub_.add("clear",[=](String s){ pub_.clearPrefs(); return "cleared"; }).hide();
+  pub_.add("debug",[=](String s){ psu_.debug_ = !(s == "off"); return String(psu_.debug_); }).hide();
 
   server_.on("/", HTTP_ANY, [=]() {
     log("got req " + server_.uri() + " -> " + server_.hostHeader());
@@ -80,11 +81,13 @@ void Solar::setup() {
   pub_.loadPrefs();
   // wifi & mqtt is connected by pubsubConnect below
 
-  psu_.begin();
 
   //fn, name, stack size, parameter, priority, handle
   // xTaskCreate(runLoop,    "loop", 10000, this, 1, NULL);
   xTaskCreate(runPubt, "publish", 10000, this, 1, NULL);
+
+  if (!psu_.begin())
+    log("PSU begin failed");
   Serial.println("finished setup");
 }
 
@@ -131,7 +134,7 @@ void Solar::applyAdjustment() {
 }
 
 void Solar::startSweep() {
-  if (state_ == States::error);
+  if (state_ == States::error)
     return log("can't sweep, system is in error state");
   log(str("SWEEP START c=%0.3f, (setpoint was %0.3f)\n", newDesiredCurr_, setpoint_));
   setState(States::sweeping);
@@ -155,8 +158,8 @@ void Solar::doSweepStep() {
   if (sweepPoints_.empty() || (psu_.outCurr_ > sweepPoints_.back().i))
     sweepPoints_.push_back({v: inVolt_, i: psu_.outCurr_});
 
-  if (hasCollapsed()) { //great, sweep finished
   //TODO find collapse from _decreasing power_, pick setpoint at the historical max, save collapse voltage
+  if (hasCollapsed()) { //great, sweep finished
     setState(States::mppt);
     printStatus();
     if (sweepPoints_.size()) {
@@ -166,6 +169,7 @@ void Solar::doSweepStep() {
       psu_.setCurrent(mp.i * 0.95);
       setpoint_ = mp.v; //+stability offset?
       pub_.setDirtyAddr(&setpoint_);
+      nextSolarAdjust_ = millis() + 1000; //don't recheck the voltage too quickly
     } else log("SWEEP DONE, no points?!");
     sweepPoints_.clear();
     //the output should be re-enabled below
@@ -222,7 +226,7 @@ void Solar::loop() {
       } else if (!psu_.outEn_) { //power supply is off. let's check about turning it on
         if (inVolt_ < psu_.outVolt_ || psu_.outVolt_ < 0.1) {
           return backoff("not starting up, input voltage too low (is it dark?)");
-        } else if ((psu_.limitVolt_ - psu_.outVolt_) < (psu_.limitVolt_ * 0.60)) { //li-ion 4.1-2.5 is 60% of range
+        } else if ((psu_.outVolt_ > psu_.limitVolt_) || (psu_.outVolt_ < (psu_.limitVolt_ * 0.60))) { //li-ion 4.1-2.5 is 60% of range
           return backoff(str("not starting up, battery %0.1fV too far from Supply limit %0.1fV. ", psu_.outVolt_, psu_.limitVolt_) +
           "Use outvolt command (or PSU buttons) to set your appropiate battery voltage and restart");
         } else {
@@ -238,7 +242,11 @@ void Solar::loop() {
     currFilt_ = currFilt_ - 0.1 * (currFilt_ - newDesiredCurr_);
     pub_.setDirtyAddr(&currFilt_);
     heap_caps_check_integrity_all(true);
-    nextSolarAdjust_ = now + psuperiod_;
+    backoffLevel_ = max(backoffLevel_ - 1, 0); //successes means no more backoff!
+    if (state_ != States::sweeping) {
+      setState(isSystemGood()? (psu_.outEn_? States::mppt : States::off) : States::error);
+    }
+    nextSolarAdjust_ = now + adjustPeriod_;
   }
   if ((now - lastLog_) >= printPeriod_) {
     printStatus();
@@ -251,9 +259,10 @@ void Solar::loop() {
       pub_.setDirty({"outvolt", "outcurr", "outputEN", "wh", "outpower"});
       lastPSUSuccess_ = now;
     } else {
-      log("psu update fail");
+      log("psu update fail" + String(psu_.debug_? " serial debug output enabled" : ""));
       psu_.flush();
     }
+    psu_.debug_ = (!res && backoffLevel_ > 0);
     nextPSUpdate_ = now + 5000;
     lastPSUpdate_ = now;
   }
@@ -265,6 +274,14 @@ void Solar::loop() {
     }
     lastAutoSweep_ = now;
   }
+}
+
+bool Solar::isSystemGood() const {
+  if (psu_.debug_) {
+    Serial.printf("system good? last %lui, back %d", (millis() - lastPSUSuccess_)/1000, backoffLevel_);
+    Serial.println(state_);
+  }
+  return ((millis() - lastPSUSuccess_) < 10000) && (backoffLevel_ < 2);
 }
 
 void Solar::publishTask() {
@@ -327,15 +344,18 @@ void Solar::log(String s) {
 }
 
 void Solar::backoff(String reason) {
-  log("backoff: " + reason);
-  nextSolarAdjust_ = millis() + 60000; //big backoff
+  backoffLevel_ = min(backoffLevel_ + 1, 8);
+  int back = (backoffLevel_ * backoffLevel_) / 2;
+  log(str("backoff %ds: ", back * adjustPeriod_ / 1000) + reason);
+  nextSolarAdjust_ = millis() + back * adjustPeriod_; //big backoff
   nextPSUpdate_ = nextSolarAdjust_; //backoff this too
   if (psu_.outEn_)
     psu_.enableOutput(false);
 }
 
 void Solar::setState(const String state) {
+  if (state_ != state) 
+    pub_.setDirty("state");
   state_ = state;
-  pub_.setDirty("state");
 }
 
