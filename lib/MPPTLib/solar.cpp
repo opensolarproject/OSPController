@@ -7,6 +7,7 @@
 WiFiClient espClient;
 
 Solar::Solar() :
+        state_(States::off),
         psu_(Serial2),
         server_(80),
         pub_() {
@@ -19,6 +20,7 @@ void runPubt(void*c) { ((Solar*)c)->publishTask(); }
 //TODO: make these statics members instead
 uint32_t lastV = 0, lastpub = 20000, lastLog_ = 0;
 uint32_t lastPSUpdate_ = 0, lastPSUadjust_ = 1000;
+uint32_t lastPSUSuccess_ = 0;
 uint32_t lastAutoSweep_ = 0;
 double newDesiredCurr_ = 0;
 bool needsQuickAdj_ = false;
@@ -51,7 +53,6 @@ void Solar::setup() {
   pub_.add("ramplimit",  ramplimit_      ).pref();
   pub_.add("setpoint",   setpoint_       ).pref();
   pub_.add("vadjust",    vadjust_        ).pref();
-  pub_.add("autostart",  autoStart_      ).pref();
   pub_.add("printperiod",printPeriod_    ).pref();
   pub_.add("pubperiod",  db_.period      ).pref();
   pub_.add("PSUperiod",  psuperiod_      ).pref();
@@ -131,8 +132,12 @@ void Solar::applyAdjustment() {
 }
 
 void Solar::startSweep() {
+  if (state_ == States::error);
+    return log("can't sweep, system is in error state");
   log(str("SWEEP START c=%0.3f, (setpoint was %0.3f)\n", newDesiredCurr_, setpoint_));
-  sweeping_ = true;
+  setState(States::sweeping);
+  if (!psu_.outEn_)
+      psu_.enableOutput(false);
   lastAutoSweep_ = millis();
 }
 
@@ -141,7 +146,7 @@ void Solar::doSweepStep() {
   if (newDesiredCurr_ >= currentCap_) {
     setpoint_ = inVolt_ - 4 * pgain_;
     newDesiredCurr_ = currentCap_;
-    sweeping_ = false;
+    setState(States::mppt);
     log(str("SWEEP DONE, currentcap reached (setpoint=%0.3f)\n", setpoint_));
     return applyAdjustment();
   }
@@ -150,8 +155,8 @@ void Solar::doSweepStep() {
   if (sweepPoints_.empty() || (psu_.outCurr_ > sweepPoints_.back().i))
     sweepPoints_.push_back({v: inVolt_, i: psu_.outCurr_});
 
-  if (hasCollapsed()) {
-    sweeping_ = false;
+  if (hasCollapsed()) { //great, sweep finished
+    setState(States::mppt);
     printStatus();
     if (sweepPoints_.size()) {
       VI mp = sweepPoints_.front(); //furthest back point
@@ -162,7 +167,7 @@ void Solar::doSweepStep() {
       pub_.setDirtyAddr(&setpoint_);
     } else log("SWEEP DONE, no points?!");
     sweepPoints_.clear();
-    autoStart_ = true; //main output will be enabled below by autostart logic
+    //the output should be re-enabled below
   }
 }
 
@@ -178,7 +183,7 @@ void Solar::loop() {
     int analogval = analogRead(pinInvolt_);
     inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
     pub_.setDirtyAddr(&inVolt_);
-    if (sweeping_) {
+    if (state_ == States::sweeping) {
       doSweepStep();
     } else if (setpoint_ > 0 && psu_.outEn_) { //corrections enabled
       double error = inVolt_ - setpoint_;
@@ -193,8 +198,16 @@ void Solar::loop() {
     }
     lastV = millis();
   }
+
   if ((now - lastPSUadjust_) >= (needsQuickAdj_? 100 : psuperiod_)) {
-    if (setpoint_ > 0 && !sweeping_) {
+    if ((now - lastPSUSuccess_) > 15000) { //updating has failed for too long
+      setState(States::error);
+      if (psu_.outEn_ || psu_.limitCurr_ > 0) {
+        backoff("PSU failure, disabling");
+        psu_.enableOutput(false);
+        psu_.setCurrent(0);
+      }
+    } else if (setpoint_ > 0 && (state_ != States::sweeping)) {
       if (psu_.outEn_)
         applyAdjustment();
 
@@ -206,9 +219,16 @@ void Solar::loop() {
         log(str("collapsed! %0.1fV set recovery to %0.1fA\n", inVolt_ ,newDesiredCurr_));
         psu_.enableOutput(false);
         psu_.setCurrent(newDesiredCurr_);
-      } else if (autoStart_ && !psu_.outEn_ && inVolt_ > (setpoint_ * 1.02)) {
-        log("restoring from collapse");
-        psu_.enableOutput((psu_.outEn_ = true));
+      } else if (!psu_.outEn_) { //power supply is off. let's check about turning it on
+        if (inVolt_ < psu_.outVolt_) {
+          backoff("not starting up, input voltage too low (is it dark?)");
+        } else if ((psu_.limitVolt_ - psu_.outVolt_) < (psu_.limitVolt_ * 0.60)) { //li-ion 4.1-2.5 is 60% of range
+          backoff(str("not starting up, battery %0.1fV too far from Supply limit %0.1fV. ", psu_.outVolt_, psu_.limitVolt_) + 
+          "Use outvolt command (or PSU buttons) to set your appropiate battery voltage and restart");
+        } else {
+          log("restoring from collapse");
+          psu_.enableOutput(true);
+        }
       }
     }
     if (collapses_.size() && (millis() - collapses_.front()) > (5 * 60000)) { //5m age
@@ -229,15 +249,15 @@ void Solar::loop() {
     if (res) {
       wh_ += psu_.outVolt_ * psu_.outCurr_ * (now - lastPSUpdate_) / 1000.0 / 60 / 60;
       pub_.setDirty({"outvolt", "outcurr", "outputEN", "wh", "outpower"});
+      lastPSUSuccess_ = now;
     } else {
       log("psu update fail");
       psu_.flush();
-      //psu_.debug_ = true;
     }
     lastPSUpdate_ = now;
   }
   bool forceSweep = (getCollapses() > 2) && (now - lastAutoSweep_) >= (autoSweep_ / 3.0 * 1000);
-  if (autoStart_ && autoSweep_ > 0 && ((now - lastAutoSweep_) >= (autoSweep_ * 1000) || forceSweep)) {
+  if ((state_ == States::mppt) && autoSweep_ > 0 && ((now - lastAutoSweep_) >= (autoSweep_ * 1000) || forceSweep)) {
     if (psu_.outEn_ && now > autoSweep_*1000) { //skip this sweep if disabled or just started up
       log(str("Starting AUTO-SWEEP (last run %0.1f mins ago)\n", (now - lastAutoSweep_)/1000.0/60.0));
       startSweep();
