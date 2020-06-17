@@ -141,7 +141,7 @@ void Solar::startSweep() {
 }
 
 void Solar::doSweepStep() {
-  newDesiredCurr_ = psu_.limitCurr_ + 0.02; //TODO maybe add a pref for sweep speed or use pgain?
+  newDesiredCurr_ = psu_.limitCurr_ + (inVolt_ * 0.001); //speed porportional to input voltage
   if (newDesiredCurr_ >= currentCap_) {
     setpoint_ = inVolt_ - 4 * pgain_;
     newDesiredCurr_ = currentCap_;
@@ -149,12 +149,14 @@ void Solar::doSweepStep() {
     log(str("SWEEP DONE, currentcap reached (setpoint=%0.3f)\n", setpoint_));
     return applyAdjustment();
   }
+  logme += "SWEEPING ";
   applyAdjustment();
 
   if (sweepPoints_.empty() || (psu_.outCurr_ > sweepPoints_.back().i))
     sweepPoints_.push_back({v: inVolt_, i: psu_.outCurr_});
 
   if (hasCollapsed()) { //great, sweep finished
+  //TODO find collapse from _decreasing power_, pick setpoint at the historical max, save collapse voltage
     setState(States::mppt);
     printStatus();
     if (sweepPoints_.size()) {
