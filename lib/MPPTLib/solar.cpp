@@ -46,6 +46,7 @@ void Solar::setup() {
   pub_.add("outvolt", [=](String s){ if (s.length()) psu_.setVoltage(s.toFloat()); return String(psu_.outVolt_); });
   pub_.add("outcurr", [=](String s){ if (s.length()) psu_.setCurrent(s.toFloat()); return String(psu_.outCurr_); });
   pub_.add("outpower",[=](String s){ return String(psu_.outVolt_ * psu_.outCurr_); });
+  pub_.add("currFilt",   currFilt_       );
   pub_.add("pgain",      pgain_          ).pref();
   pub_.add("ramplimit",  ramplimit_      ).pref();
   pub_.add("setpoint",   setpoint_       ).pref();
@@ -155,7 +156,7 @@ void Solar::doSweepStep() {
     if (sweepPoints_.size()) {
       VI mp = sweepPoints_.front(); //furthest back point
       log(str("SWEEP DONE. c=%0.3f v=%0.3f, (setpoint was %0.3f)\n", mp.i, mp.v, setpoint_));
-      psu_.enableOutput((psu_.outEn_ = false));
+      psu_.enableOutput(false);
       psu_.setCurrent(mp.i * 0.95);
       setpoint_ = mp.v; //+stability offset?
       pub_.setDirtyAddr(&setpoint_);
@@ -198,12 +199,12 @@ void Solar::loop() {
         applyAdjustment();
 
       if (hasCollapsed()) {
-        newDesiredCurr_ = max(psu_.limitCurr_ * 0.95, 0.00); //restore at 90% of previous point
+        newDesiredCurr_ = currFilt_ * 0.95; //restore at 90% of previous point
         collapses_.push_back(now);
         pub_.setDirty("collapses");
         needsQuickAdj_ = false;
         log(str("collapsed! %0.1fV set recovery to %0.1fA\n", inVolt_ ,newDesiredCurr_));
-        psu_.enableOutput((psu_.outEn_ = false));
+        psu_.enableOutput(false);
         psu_.setCurrent(newDesiredCurr_);
       } else if (autoStart_ && !psu_.outEn_ && inVolt_ > (setpoint_ * 1.02)) {
         log("restoring from collapse");
@@ -214,6 +215,8 @@ void Solar::loop() {
       logme += str("[clear collapse (%ds ago)]", (now - collapses_.pop_front())/1000);
       pub_.setDirty("collapses");
     }
+    currFilt_ = currFilt_ - 0.1 * (currFilt_ - newDesiredCurr_);
+    pub_.setDirtyAddr(&currFilt_);
     heap_caps_check_integrity_all(true);
     lastPSUadjust_ = now;
   }
