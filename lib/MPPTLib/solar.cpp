@@ -81,7 +81,6 @@ void Solar::setup() {
   pub_.loadPrefs();
   // wifi & mqtt is connected by pubsubConnect below
 
-
   //fn, name, stack size, parameter, priority, handle
   // xTaskCreate(runLoop,    "loop", 10000, this, 1, NULL);
   xTaskCreate(runPubt, "publish", 10000, this, 1, NULL);
@@ -292,7 +291,7 @@ void Solar::publishTask() {
     String topic(topicbuf), val = str(std::string((char*)buf, len));
     log("got sub value " + topic + " -> " + val);
     if (topic == (db_.feed + "/wh")) {
-      wh_ = val.toFloat();
+      wh_ += val.toFloat();
       log("restored wh value to " + val);
       db_.client.unsubscribe((db_.feed + "/wh").c_str());
     } else if (millis() > ignoreSubsUntil_) { //don't load old values
@@ -354,7 +353,7 @@ void Solar::backoff(String reason) {
 }
 
 void Solar::setState(const String state) {
-  if (state_ != state) 
+  if (state_ != state)
     pub_.setDirty("state");
   state_ = state;
 }
