@@ -21,7 +21,7 @@ void runPubt(void*c) { ((Solar*)c)->publishTask(); }
 uint32_t lastV = 0, lastpub = 20000, lastLog_ = 0;
 uint32_t nextPSUpdate_ = 0, nextSolarAdjust_ = 1000;
 uint32_t lastPSUpdate_ = 0, lastPSUSuccess_ = 0;
-uint32_t lastAutoSweep_ = 0;
+uint32_t nextAutoSweep_ = 0, lastAutoSweep_ = 0;
 double newDesiredCurr_ = 0;
 String logme;
 
@@ -135,7 +135,7 @@ void Solar::applyAdjustment() {
 void Solar::startSweep() {
   if (state_ == States::error)
     return log("can't sweep, system is in error state");
-  log(str("SWEEP START c=%0.3f, (setpoint was %0.3f)\n", newDesiredCurr_, setpoint_));
+  log(str("SWEEP START c=%0.3f, (setpoint was %0.3f)", newDesiredCurr_, setpoint_));
   setState(States::sweeping);
   if (!psu_.outEn_)
       psu_.enableOutput(false);
@@ -145,10 +145,10 @@ void Solar::startSweep() {
 void Solar::doSweepStep() {
   newDesiredCurr_ = psu_.limitCurr_ + (inVolt_ * 0.001); //speed porportional to input voltage
   if (newDesiredCurr_ >= currentCap_) {
-    setpoint_ = inVolt_ - 4 * pgain_;
+    setpoint_ = inVolt_ - (pgain_ * 4);
     newDesiredCurr_ = currentCap_;
     setState(States::mppt);
-    log(str("SWEEP DONE, currentcap reached (setpoint=%0.3f)\n", setpoint_));
+    log(str("SWEEP DONE, currentcap reached (setpoint=%0.3f)", setpoint_));
     return applyAdjustment();
   }
   logme += "SWEEPING ";
@@ -163,7 +163,7 @@ void Solar::doSweepStep() {
     printStatus();
     if (sweepPoints_.size()) {
       VI mp = sweepPoints_.front(); //furthest back point
-      log(str("SWEEP DONE. c=%0.3f v=%0.3f, (setpoint was %0.3f)\n", mp.i, mp.v, setpoint_));
+      log(str("SWEEP DONE. c=%0.3f v=%0.3f, (setpoint was %0.3f)", mp.i, mp.v, setpoint_));
       psu_.enableOutput(false);
       psu_.setCurrent(mp.i * 0.95);
       setpoint_ = mp.v; //+stability offset?
@@ -219,13 +219,14 @@ void Solar::loop() {
         newDesiredCurr_ = currFilt_ * 0.95; //restore at 90% of previous point
         collapses_.push_back(now);
         pub_.setDirty("collapses");
-        log(str("collapsed! %0.1fV set recovery to %0.1fA\n", inVolt_ ,newDesiredCurr_));
+        log(str("collapsed! %0.1fV set recovery to %0.1fA", inVolt_ ,newDesiredCurr_));
         psu_.enableOutput(false);
         psu_.setCurrent(newDesiredCurr_);
       } else if (!psu_.outEn_) { //power supply is off. let's check about turning it on
         if (inVolt_ < psu_.outVolt_ || psu_.outVolt_ < 0.1) {
           return backoff("not starting up, input voltage too low (is it dark?)");
-        } else if ((psu_.outVolt_ > psu_.limitVolt_) || (psu_.outVolt_ < (psu_.limitVolt_ * 0.60))) { //li-ion 4.1-2.5 is 60% of range
+        } else if ((psu_.outVolt_ > psu_.limitVolt_) || (psu_.outVolt_ < (psu_.limitVolt_ * 0.60) && psu_.outVolt_ > 1)) {
+          //li-ion 4.1-2.5 is 60% of range. the last && condition allows system to work with battery drain diode in place
           return backoff(str("not starting up, battery %0.1fV too far from Supply limit %0.1fV. ", psu_.outVolt_, psu_.limitVolt_) +
           "Use outvolt command (or PSU buttons) to set your appropiate battery voltage and restart");
         } else {
@@ -265,12 +266,19 @@ void Solar::loop() {
     nextPSUpdate_ = now + 5000;
     lastPSUpdate_ = now;
   }
-  bool forceSweep = (getCollapses() > 2) && (now - lastAutoSweep_) >= (autoSweep_ / 3.0 * 1000);
-  if ((state_ == States::mppt) && autoSweep_ > 0 && ((now - lastAutoSweep_) >= (autoSweep_ * 1000) || forceSweep)) {
-    if (psu_.outEn_ && now > autoSweep_*1000) { //skip this sweep if disabled or just started up
-      log(str("Starting AUTO-SWEEP (last run %0.1f mins ago)\n", (now - lastAutoSweep_)/1000.0/60.0));
+  if (getCollapses() > 2) {
+    nextAutoSweep_ = lastAutoSweep_ + autoSweep_ / 3.0 * 1000;
+  }
+  if (autoSweep_ > 0 && (now > nextAutoSweep_)) {
+    if (psu_.outCurr_ > (currentCap_ * 0.95)) {
+      log(str("Skipping auto-sweep. Already at currentCap (%0.1fA)", currentCap_));
+    } else if (psu_.outVolt_ > (psu_.limitVolt_ * 0.999)) {
+      log(str("Skipping auto-sweep. Battery-full voltage reached (%0.1fV)", psu_.outVolt_));
+    } else if (psu_.outEn_ && isSystemGood()) {
+      log(str("Starting AUTO-SWEEP (last run %0.1f mins ago)", (now - lastAutoSweep_)/1000.0/60.0));
       startSweep();
     }
+    nextAutoSweep_ = now + autoSweep_ * 1000;
     lastAutoSweep_ = now;
   }
 }
@@ -333,8 +341,10 @@ void Solar::publishTask() {
 }
 
 void Solar::printStatus() {
-  Serial.println(str("%0.1fVin -> %0.2fWh <%0.2fV out %0.2fA %den> ", inVolt_, wh_, psu_.outVolt_, psu_.outCurr_, psu_.outEn_) + logme);
-  logme = "";
+  const String s(str("%0.1fVin -> %0.2fWh <%0.2fV out %0.2fA %den> ", inVolt_, wh_, psu_.outVolt_, psu_.outCurr_, psu_.outEn_) + logme);
+  logme = ""; //clear
+  Serial.println(s);
+  if (psu_.debug_) logPub_.push_back(s);
 }
 
 void Solar::log(String s) {
