@@ -139,7 +139,7 @@ void Solar::startSweep() {
   log(str("SWEEP START c=%0.3f, (setpoint was %0.3f)", newDesiredCurr_, setpoint_));
   setState(States::sweeping);
   if (!psu_.outEn_)
-      psu_.enableOutput(false);
+      psu_.enableOutput(true);
   lastAutoSweep_ = millis();
 }
 
@@ -149,7 +149,7 @@ void Solar::doSweepStep() {
     setpoint_ = inVolt_ - (pgain_ * 4);
     newDesiredCurr_ = currentCap_;
     setState(States::mppt);
-    log(str("SWEEP DONE, currentcap reached (setpoint=%0.3f)", setpoint_));
+    log(str("SWEEP DONE, currentcap of %0.1fA reached (setpoint=%0.3f)", currentCap_, setpoint_));
     return applyAdjustment();
   }
   logme += "SWEEPING ";
@@ -184,8 +184,12 @@ void Solar::doSweepStep() {
 }
 
 bool Solar::hasCollapsed() const {
-  //enabled power supplies operate either in CC or CV modes. This, within 0.2%, says that it's in neither mode.
-  return psu_.outEn_ && (psu_.outCurr_ < psu_.limitCurr_ * 0.998) && (psu_.outVolt_ < psu_.limitVolt_ * 0.998);
+  //enabled power supplies operate either in CC or CV modes. This, within 1%, says that it's in neither mode.
+  bool isVoltBelowLim = (psu_.outVolt_ < psu_.limitVolt_ * 1.01);
+  bool isCurrentBelowLim = (psu_.outCurr_ < psu_.limitCurr_ * 1.01);
+  if (psu_.debug_) Serial.printf("hasCollapsed v%d c%d PSU[%0.1fV %0.1fVlim %0.1fA %0.1fClim]",
+    isVoltBelowLim, isCurrentBelowLim, psu_.outVolt_, psu_.limitVolt_,psu_.outCurr_, psu_.limitCurr_);
+  return psu_.outEn_ && isVoltBelowLim && isCurrentBelowLim;
 }
 
 int Solar::getCollapses() const { return collapses_.size(); }
@@ -211,7 +215,7 @@ void Solar::loop() {
     }
 
     //update system states:
-    if (state_ != States::sweeping || state_ != States::collapsemode) {
+    if (state_ != States::sweeping && state_ != States::collapsemode) {
       bool psuActive = (millis() - lastPSUSuccess_) < 11000;
       if (psu_.outEn_ && psuActive) {
         if      (psu_.outCurr_ > (currentCap_     * 0.95 )) setState(States::capped);
@@ -240,7 +244,7 @@ void Solar::loop() {
         newDesiredCurr_ = currFilt_ * 0.95; //restore at 90% of previous point
         collapses_.push_back(now);
         pub_.setDirty("collapses");
-        log(str("collapsed! %0.1fV set recovery to %0.1fA", inVolt_ ,newDesiredCurr_));
+        log(str("collapsed! %0.1fV [%0.1fV %0.1fVlim %0.1fA %0.1fVlim] set recovery to %0.1fA", inVolt_, psu_.outVolt_, psu_.limitVolt_,psu_.outCurr_, psu_.limitCurr_, newDesiredCurr_));
         psu_.enableOutput(false);
         psu_.setCurrent(newDesiredCurr_);
       } else if (!psu_.outEn_) { //power supply is off. let's check about turning it on
@@ -260,8 +264,6 @@ void Solar::loop() {
       logme += str("[clear collapse (%ds ago)]", (now - collapses_.pop_front())/1000);
       pub_.setDirty("collapses");
     }
-    currFilt_ = currFilt_ - 0.1 * (currFilt_ - newDesiredCurr_);
-    pub_.setDirtyAddr(&currFilt_);
     heap_caps_check_integrity_all(true);
     backoffLevel_ = max(backoffLevel_ - 1, 0); //successes means no more backoff!
     nextSolarAdjust_ = now + adjustPeriod_;
@@ -274,7 +276,8 @@ void Solar::loop() {
     bool res = psu_.doUpdate();
     if (res) {
       wh_ += psu_.outVolt_ * psu_.outCurr_ * (now - lastPSUpdate_) / 1000.0 / 60 / 60;
-      pub_.setDirty({"outvolt", "outcurr", "outputEN", "wh", "outpower"});
+      currFilt_ = currFilt_ - 0.1 * (currFilt_ - psu_.outCurr_);
+      pub_.setDirty({"outvolt", "outcurr", "outputEN", "wh", "outpower", "currFilt"});
       lastPSUSuccess_ = now;
     } else {
       log("psu update fail" + String(psu_.debug_? " serial debug output enabled" : ""));
