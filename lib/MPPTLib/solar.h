@@ -12,7 +12,7 @@ struct DBConnection {
   int32_t period = 1000;
 };
 
-struct VI { double v, i; };
+struct VI { double v, i, input; bool collapsed; };
 
 class Solar {
 public:
