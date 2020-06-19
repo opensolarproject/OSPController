@@ -116,6 +116,7 @@ void Solar::doConnect() {
         for (auto i : pubs)
           if (i->pref_)
             db_.client.subscribe((db_.feed + "/prefs/" + i->key).c_str()); //subscribe to preference changes
+        db_.client.subscribe((db_.feed + "/cmd").c_str()); //subscribe to cmd topic for any actions
       } else Serial.println("PubSub connect ERROR! " + db_.client.state());
     } else Serial.println("no MQTT user / pass / server / feed set up!");
   } else Serial.printf("can't pub connect, wifi %d pub %d\n", WiFi.isConnected(), db_.client.connected());
@@ -303,9 +304,12 @@ void Solar::publishTask() {
       log("restored wh value to " + val);
       db_.client.unsubscribe((db_.feed + "/wh").c_str());
     } else if (millis() > ignoreSubsUntil_) { //don't load old values
-      topic.replace(db_.feed + "/prefs/", ""); //replaces in-place, sadly
-      String ret = pub_.handleSet(topic, val);
-      log("MQTT cmd: " + ret);
+      if (topic == db_.feed + "/cmd") {
+        log("MQTT cmd " + topic + ":" + val + " -> " + pub_.handleCmd(val));
+      } else {
+        topic.replace(db_.feed + "/prefs/", ""); //replaces in-place, sadly
+        log("MQTT cmd " + topic + ":" + val + " -> " + pub_.handleSet(topic, val));
+      }
     }
   });
   db_.client.subscribe((db_.feed + "/wh").c_str());

@@ -87,6 +87,13 @@ bool Publishable::clearPrefs() {
   return prefs.clear();
 }
 
+String Publishable::handleCmd(String cmd) {
+  cmd.trim();
+  int pivot = cmd.indexOf('=');
+  if (pivot < 0) pivot = cmd.indexOf(' ');
+  return handleSet(cmd.substring(0,pivot), cmd.substring(pivot + 1));
+}
+
 String Publishable::handleSet(String key, String val) {
   for (auto i : items_)
     if (i.first == key) {
@@ -121,15 +128,15 @@ void Publishable::setDirtyAddr(void const* v) {
 }
 
 void Publishable::poll(Stream* stream) {
+  static String buff;
   if (stream->available()) { //cmd val
-    String cmd = stream->readStringUntil(' ');
-    cmd.trim();
-    const String val = stream->readStringUntil('\n');
-
-    String ret = handleSet(cmd, val);
-    stream->println("<" + cmd + " " + val + "> " + ret);
-    while (stream->available())
-      stream->read();
+    buff += stream->readString();
+    int end = -1;
+    while ((end = buff.indexOf('\n')) > 0) {
+      stream->println(handleCmd(buff.substring(0, end))); //TODO - 1 to exclude newline?
+      buff = buff.substring(end + 1);
+      buff.trim();
+    }
   }
 }
 

@@ -43,6 +43,7 @@ public:
   PubItem& add(String name, Action, int pubPeriod = DEFAULT_PERIOD);
 
   void poll(Stream*);
+  String handleCmd(String cmd);
   String handleSet(String key, String val);
   String toJson() const;
   int loadPrefs();
