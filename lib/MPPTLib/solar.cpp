@@ -82,11 +82,11 @@ void Solar::setup() {
   // wifi & mqtt is connected by pubsubConnect below
 
   //fn, name, stack size, parameter, priority, handle
-  // xTaskCreate(runLoop,    "loop", 10000, this, 1, NULL);
   xTaskCreate(runPubt, "publish", 10000, this, 1, NULL);
 
   if (!psu_.begin())
     log("PSU begin failed");
+  nextAutoSweep_ = millis() + autoSweep_ * 0.2;
   Serial.println("finished setup");
 }
 
@@ -158,15 +158,22 @@ void Solar::doSweepStep() {
   if (sweepPoints_.empty() || (psu_.outCurr_ > sweepPoints_.back().i))
     sweepPoints_.push_back({v: inVolt_, i: psu_.outCurr_});
 
-  //TODO find collapse from _decreasing power_, pick setpoint at the historical max, save collapse voltage
   if (hasCollapsed()) { //great, sweep finished
-    setState(States::mppt);
     printStatus();
     if (sweepPoints_.size()) {
       VI mp = sweepPoints_.front(); //furthest back point
-      log(str("SWEEP DONE. c=%0.3f v=%0.3f, (setpoint was %0.3f)", mp.i, mp.v, setpoint_));
-      psu_.enableOutput(false);
-      psu_.setCurrent(mp.i * 0.95);
+      for (int i = 0; i < sweepPoints_.size(); i++)
+        if (sweepPoints_[i].i * sweepPoints_[i].v > mp.i * mp.v) mp = sweepPoints_[i]; //find max
+      log(str("SWEEP DONE. max point = %0.3fA %0.3fV, (setpoint was %0.3f)", mp.i, mp.v, setpoint_));
+      if (sweepPoints_.back().v == mp.v && sweepPoints_.back().i == mp.i) {
+        setState(States::collapsemode);
+        nextAutoSweep_ = millis() + autoSweep_ * 1000 / 3; //reschedule soon
+        log(str("Max point is actually running collapsed. Will sweep again in %0.1f mins", ((float)autoSweep_) / 3.0 / 60.0));
+      } else {
+        setState(States::mppt);
+        psu_.enableOutput(false);
+        psu_.setCurrent(mp.i * 0.95);
+      }
       setpoint_ = mp.v; //+stability offset?
       pub_.setDirtyAddr(&setpoint_);
       nextSolarAdjust_ = millis() + 1000; //don't recheck the voltage too quickly
@@ -177,7 +184,8 @@ void Solar::doSweepStep() {
 }
 
 bool Solar::hasCollapsed() const {
-  return (psu_.outEn_ && inVolt_ < (psu_.outVolt_ * 10 / 9)); //voltage match method;
+  //enabled power supplies operate either in CC or CV modes. This, within 0.2%, says that it's in neither mode.
+  return psu_.outEn_ && (psu_.outCurr_ < psu_.limitCurr_ * 0.998) && (psu_.outVolt_ < psu_.limitVolt_ * 0.998);
 }
 
 int Solar::getCollapses() const { return collapses_.size(); }
@@ -201,13 +209,25 @@ void Solar::loop() {
         }
       }
     }
+
+    //update system states:
+    if (state_ != States::sweeping || state_ != States::collapsemode) {
+      bool psuActive = (millis() - lastPSUSuccess_) < 11000;
+      if (psu_.outEn_ && psuActive) {
+        if      (psu_.outCurr_ > (currentCap_     * 0.95 )) setState(States::capped);
+        else if (psu_.outVolt_ > (psu_.limitVolt_ * 0.999)) setState(States::full_cv);
+        else setState(States::mppt);
+      } else if (!psuActive) {
+        if (inVolt_ < 1) setState(States::off); //diode connected, power supply is off when dark
+        else setState(States::error);
+      }
+    }
     lastV = millis();
   }
 
   if (now > nextSolarAdjust_) {
-    if ((now - lastPSUSuccess_) > 15000) { //updating has failed for too long
-      setState(States::error);
-      if (psu_.outEn_ || psu_.limitCurr_ > 0) {
+    if (state_ == States::error) {
+      if ((now - lastPSUSuccess_) < 30000) { //for 30s after failure try and shut it down
         psu_.enableOutput(false);
         psu_.setCurrent(0);
         return backoff("PSU failure, disabling");
@@ -216,7 +236,7 @@ void Solar::loop() {
       if (psu_.outEn_)
         applyAdjustment();
 
-      if (hasCollapsed()) {
+      if (hasCollapsed() && state_ != States::collapsemode) {
         newDesiredCurr_ = currFilt_ * 0.95; //restore at 90% of previous point
         collapses_.push_back(now);
         pub_.setDirty("collapses");
@@ -244,9 +264,6 @@ void Solar::loop() {
     pub_.setDirtyAddr(&currFilt_);
     heap_caps_check_integrity_all(true);
     backoffLevel_ = max(backoffLevel_ - 1, 0); //successes means no more backoff!
-    if (state_ != States::sweeping) {
-      setState(isSystemGood()? (psu_.outEn_? States::mppt : States::off) : States::error);
-    }
     nextSolarAdjust_ = now + adjustPeriod_;
   }
   if ((now - lastLog_) >= printPeriod_) {
@@ -271,25 +288,17 @@ void Solar::loop() {
     nextAutoSweep_ = lastAutoSweep_ + autoSweep_ / 3.0 * 1000;
   }
   if (autoSweep_ > 0 && (now > nextAutoSweep_)) {
-    if (psu_.outCurr_ > (currentCap_ * 0.95)) {
+    if (state_ == States::capped) {
       log(str("Skipping auto-sweep. Already at currentCap (%0.1fA)", currentCap_));
-    } else if (psu_.outVolt_ > (psu_.limitVolt_ * 0.999)) {
+    } else if (state_ == States::full_cv) {
       log(str("Skipping auto-sweep. Battery-full voltage reached (%0.1fV)", psu_.outVolt_));
-    } else if (psu_.outEn_ && isSystemGood()) {
+    } else if (state_ == States::mppt) {
       log(str("Starting AUTO-SWEEP (last run %0.1f mins ago)", (now - lastAutoSweep_)/1000.0/60.0));
       startSweep();
     }
     nextAutoSweep_ = now + autoSweep_ * 1000;
     lastAutoSweep_ = now;
   }
-}
-
-bool Solar::isSystemGood() const {
-  if (psu_.debug_) {
-    Serial.printf("system good? last %lui, back %d", (millis() - lastPSUSuccess_)/1000, backoffLevel_);
-    Serial.println(state_);
-  }
-  return ((millis() - lastPSUSuccess_) < 10000) && (backoffLevel_ < 2);
 }
 
 void Solar::publishTask() {
@@ -345,7 +354,10 @@ void Solar::publishTask() {
 }
 
 void Solar::printStatus() {
-  const String s(str("%0.1fVin -> %0.2fWh <%0.2fV out %0.2fA %den> ", inVolt_, wh_, psu_.outVolt_, psu_.outCurr_, psu_.outEn_) + logme);
+  String s = state_;
+  s.toUpperCase();
+  s += str(" %0.1fVin -> %0.2fWh <%0.2fV out %0.2fA %den> ", inVolt_, wh_, psu_.outVolt_, psu_.outCurr_, psu_.outEn_);
+  s += logme;
   logme = ""; //clear
   Serial.println(s);
   if (psu_.debug_) logPub_.push_back(s);
@@ -367,8 +379,10 @@ void Solar::backoff(String reason) {
 }
 
 void Solar::setState(const String state) {
-  if (state_ != state)
+  if (state_ != state) {
     pub_.setDirty("state");
+    log("state change to " + state + " (from " + state_ + ")");
+  }
   state_ = state;
 }
 
