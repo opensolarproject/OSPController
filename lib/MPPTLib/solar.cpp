@@ -78,6 +78,28 @@ void Solar::setup() {
     if (! ret.length()) ret = pub_.toJson();
     server_.send(200, "application/json", ret.c_str());
   });
+  server_.on("/update", HTTP_POST, [this](){
+    server_.sendHeader("Connection", "close");
+    server_.send(200, "text/plain", (Update.hasError())?"FAIL":"OK");
+    // esp_wifi_wps_disable();
+    ESP.restart();
+  },[this](){
+    HTTPUpload& upload = server_.upload();
+    if(upload.status == UPLOAD_FILE_START){
+      log(str("Update: %s\n", upload.filename.c_str()));
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN))//start with max available size
+        Update.printError(Serial);
+    } else if (upload.status == UPLOAD_FILE_WRITE){
+      /* flashing firmware to ESP*/
+      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
+        Update.printError(Serial);
+    } else if(upload.status == UPLOAD_FILE_END){
+      if(Update.end(true)) //true to set the size to the current progress
+        log(str("Update Success: %u\nRebooting...\n", upload.totalSize));
+      else Update.printError(Serial);
+    }
+  });
+
   pub_.loadPrefs();
   // wifi & mqtt is connected by pubsubConnect below
 
