@@ -340,7 +340,7 @@ void Solar::loop() {
       log(str("Skipping auto-sweep. Already at currentCap (%0.1fA)", currentCap_));
     } else if (state_ == States::full_cv) {
       log(str("Skipping auto-sweep. Battery-full voltage reached (%0.1fV)", psu_.outVolt_));
-    } else if (state_ == States::mppt) {
+    } else if (state_ == States::mppt || state_ == States::collapsemode) {
       log(str("Starting AUTO-SWEEP (last run %0.1f mins ago)", (now - lastAutoSweep_)/1000.0/60.0));
       startSweep();
     }
