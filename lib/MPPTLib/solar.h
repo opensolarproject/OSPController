@@ -7,6 +7,7 @@
 
 struct DBConnection {
   String serv, user, pass, feed;
+  int32_t port = 1883;
   //TODO support set of allowed keys
   PubSubClient client;
   int32_t period = 1000;

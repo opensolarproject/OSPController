@@ -41,6 +41,7 @@ void Solar::setup() {
   pub_.add("wifiap",     wifiap).hide().pref();
   pub_.add("wifipass", wifipass).hide().pref();
   pub_.add("mqttServ", db_.serv).hide().pref();
+  pub_.add("mqttServ", db_.port).hide().pref();
   pub_.add("mqttUser", db_.user).hide().pref();
   pub_.add("mqttPass", db_.pass).hide().pref();
   pub_.add("mqttFeed", db_.feed).hide().pref();
@@ -114,7 +115,7 @@ void Solar::setup() {
     log("PSU begin failed");
   nextAutoSweep_ = millis() + 10000;
   Serial.println("finished setup");
-  log("OSPController Version " GIT_VERSION);
+//  log("OSPController Version %02X" GIT_VERSION);
 }
 
 void Solar::doConnect() {
@@ -136,7 +137,7 @@ void Solar::doConnect() {
   if (WiFi.isConnected() && !db_.client.connected()) {
     if (db_.serv.length() && db_.feed.length()) {
       Serial.println("Connecting MQTT to " + db_.user + "@" + db_.serv);
-      db_.client.setServer(db_.serv.c_str(), 1883); //TODO split serv:port
+      db_.client.setServer(db_.serv.c_str(), db_.port);
       if (db_.client.connect("MPPT", db_.user.c_str(), db_.pass.c_str())) {
         Serial.println("PubSub connect success! " + db_.client.state());
         auto pubs = pub_.items(true);
