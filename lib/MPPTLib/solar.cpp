@@ -110,6 +110,7 @@ void Solar::setup() {
     log("PSU begin failed");
   nextAutoSweep_ = millis() + 10000;
   Serial.println("finished setup");
+  log("OSPController Version " GIT_VERSION);
 }
 
 void Solar::doConnect() {
