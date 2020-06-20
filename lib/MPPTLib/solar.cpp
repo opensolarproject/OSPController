@@ -41,7 +41,7 @@ void Solar::setup() {
   pub_.add("wifiap",     wifiap).hide().pref();
   pub_.add("wifipass", wifipass).hide().pref();
   pub_.add("mqttServ", db_.serv).hide().pref();
-  pub_.add("mqttServ", db_.port).hide().pref();
+  pub_.add("mqttPort", db_.port).hide().pref();
   pub_.add("mqttUser", db_.user).hide().pref();
   pub_.add("mqttPass", db_.pass).hide().pref();
   pub_.add("mqttFeed", db_.feed).hide().pref();
@@ -341,7 +341,7 @@ void Solar::loop() {
       log(str("Skipping auto-sweep. Already at currentCap (%0.1fA)", currentCap_));
     } else if (state_ == States::full_cv) {
       log(str("Skipping auto-sweep. Battery-full voltage reached (%0.1fV)", psu_.outVolt_));
-    } else if (state_ == States::mppt) {
+    } else if (state_ == States::mppt || state_ == States::collapsemode) {
       log(str("Starting AUTO-SWEEP (last run %0.1f mins ago)", (now - lastAutoSweep_)/1000.0/60.0));
       startSweep();
     }
