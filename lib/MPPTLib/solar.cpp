@@ -112,6 +112,8 @@ void Solar::setup() {
 
   if (!psu_.begin())
     log("PSU begin failed");
+  newDesiredCurr_ = currFilt_ = psu_.outCurr_;
+  log(str("startup current is %0.3fAdes/%0.3fAfilt/%0.3fAout", newDesiredCurr_, currFilt_, psu_.outCurr_));
   nextAutoSweep_ = millis() + 10000;
   Serial.println("finished setup");
   log("OSPController Version " GIT_VERSION);
@@ -147,6 +149,10 @@ void Solar::doConnect() {
       } else Serial.println("PubSub connect ERROR! " + db_.client.state());
     } else Serial.println("no MQTT user / pass / server / feed set up!");
   } else Serial.printf("can't pub connect, wifi %d pub %d\n", WiFi.isConnected(), db_.client.connected());
+}
+
+String SPoint::toString() const {
+  return str("[%0.3fVin %0.3fVout %0.3fAout", input, v, i) + (collapsed? " COLLAPSED]" : " ]");
 }
 
 void Solar::applyAdjustment() {
@@ -189,6 +195,7 @@ void Solar::doSweepStep() {
     log(str("SWEEP DONE, currentcap of %0.1fA reached (setpoint=%0.3f)", currentCap_, setpoint_));
     return applyAdjustment();
   }
+  psu_.doUpdate();
 
   bool isCollapsed = hasCollapsed();
   sweepPoints_.push_back({v: psu_.outVolt_, i: psu_.outCurr_, input: inVolt_, collapsed: isCollapsed});
@@ -197,27 +204,35 @@ void Solar::doSweepStep() {
     if (sweepPoints_[i].collapsed) collapsedPoints++;
   if (isCollapsed) logme += str("COLLAPSED[%d] ", collapsedPoints);
 
-  if (isCollapsed && collapsedPoints > 3) { //great, sweep finished
-    printStatus();
-    if (sweepPoints_.size()) {
-      VI mp = sweepPoints_.front(); //furthest back point
-      for (int i = 0; i < sweepPoints_.size(); i++)
-        if (sweepPoints_[i].i * sweepPoints_[i].v > mp.i * mp.v) mp = sweepPoints_[i]; //find max
-      log(str("SWEEP DONE. max point = %0.3fA %0.3fV %0.3fVin , (setpoint was %0.3f)", mp.i, mp.v, mp.input, setpoint_));
-      if (mp.collapsed) {
-        log(str("Max point is actually running collapsed. Will sweep again in %0.1f mins", ((float)autoSweep_) / 3.0 / 60.0));
-        setState(States::collapsemode);
-        psu_.setCurrent(currentCap_ > 0? currentCap_ : 10);
-        nextAutoSweep_ = millis() + autoSweep_ * 1000 / 3; //reschedule soon
-      } else {
-        setState(States::mppt);
-        psu_.enableOutput(false);
-        psu_.setCurrent(mp.i * 0.95);
-      }
-      setpoint_ = mp.input * 1.01; //stability offset
-      pub_.setDirtyAddr(&setpoint_);
-      nextSolarAdjust_ = millis() + 1000; //don't recheck the voltage too quickly
-    } else log("SWEEP DONE, no points?!");
+  if (isCollapsed && collapsedPoints >= 2) { //great, sweep finished
+    int maxIndex = 0;
+    SPoint collapsePoint = sweepPoints_.back();
+
+    for (int i = 0; i < sweepPoints_.size(); i++) {
+      log(str("point %i = ", i) + sweepPoints_[i].toString());
+      if (!sweepPoints_[i].collapsed && sweepPoints_[i].p() > sweepPoints_[maxIndex].p())
+        maxIndex = i; //find max
+    }
+    log("SWEEP DONE. max point = " + sweepPoints_[maxIndex].toString() + str(", (setpoint was %0.3f)", setpoint_));
+    if (sweepPoints_[maxIndex].p() < collapsePoint.p()) {
+      log(str("Max point is actually running collapsed. Will sweep again in %0.1f mins", ((float)autoSweep_) / 3.0 / 60.0));
+      setState(States::collapsemode);
+      psu_.setCurrent(currentCap_ > 0? currentCap_ : 10);
+      nextAutoSweep_ = millis() + autoSweep_ * 1000 / 3; //reschedule soon
+      setpoint_ = collapsePoint.input;
+    } else {
+      maxIndex = max(0, maxIndex - 2);
+      log("Using safe max point of " + sweepPoints_[maxIndex].toString());
+      setState(States::mppt);
+      psu_.enableOutput(false);
+      psu_.setCurrent(sweepPoints_[maxIndex].i * 0.98);
+      delay(300);
+      psu_.enableOutput(true);
+      delay(300);
+      setpoint_ = sweepPoints_[maxIndex].input;
+    }
+    pub_.setDirtyAddr(&setpoint_);
+    nextSolarAdjust_ = millis() + 1000; //don't recheck the voltage too quickly
     sweepPoints_.clear();
     //the output should be re-enabled below
   }
@@ -242,7 +257,7 @@ int Solar::getCollapses() const { return collapses_.size(); }
 
 void Solar::loop() {
   uint32_t now = millis();
-  if ((now - lastV) >= ((state_ == States::sweeping)? measperiod_ * 3 : measperiod_)) {
+  if ((now - lastV) >= ((state_ == States::sweeping)? measperiod_ * 4 : measperiod_)) {
     int analogval = analogRead(pinInvolt_);
     inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
     pub_.setDirtyAddr(&inVolt_);
