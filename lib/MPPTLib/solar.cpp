@@ -17,7 +17,7 @@ Solar::Solar() :
 // void runLoop(void*c) { ((Solar*)c)->loopTask(); }
 void runPubt(void*c) { ((Solar*)c)->publishTask(); }
 
-//TODO: make these statics members instead
+//TODO: make these class members instead?
 uint32_t lastV = 0, lastpub = 20000, lastLog_ = 0;
 uint32_t nextPSUpdate_ = 0, nextSolarAdjust_ = 1000;
 uint32_t lastPSUpdate_ = 0, lastPSUSuccess_ = 0;
@@ -138,7 +138,7 @@ void Solar::doConnect() {
   if (WiFi.isConnected() && !db_.client.connected()) {
     if (db_.serv.length() && db_.feed.length()) {
       Serial.println("Connecting MQTT to " + db_.user + "@" + db_.serv);
-      db_.client.setServer(db_.serv.c_str(), 1883); //TODO split serv:port
+      db_.client.setServer(db_.getEndpoint().c_str(), db_.getPort());
       if (db_.client.connect("MPPT", db_.user.c_str(), db_.pass.c_str())) {
         Serial.println("PubSub connect success! " + db_.client.state());
         auto pubs = pub_.items(true);
@@ -448,6 +448,16 @@ void Solar::setState(const String state) {
   }
   state_ = state;
 }
+
+int DBConnection::getPort() const {
+  int sep = serv.indexOf(':');
+  return (sep >= 0)? serv.substring(sep + 1).toInt() : 1883;
+}
+String DBConnection::getEndpoint() const {
+  int sep = serv.indexOf(':');
+  return (sep >= 0)? serv.substring(0, sep) : serv;
+}
+
 
 //page styling
 const String style =

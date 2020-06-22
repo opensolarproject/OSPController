@@ -7,12 +7,13 @@
 
 struct DBConnection {
   String serv, user, pass, feed;
-  //TODO support set of allowed keys
   PubSubClient client;
   int32_t period = 1000;
+  int getPort() const;
+  String getEndpoint() const;
 };
 
-struct SPoint { 
+struct SPoint {
   double v, i, input; bool collapsed;
   String toString() const;
   double p() const { return v * i; }
