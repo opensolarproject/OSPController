@@ -36,7 +36,7 @@ public:
   void log(String s);
   // void log(const char *fmtStr, ...);
   void backoff(String reason);
-  void setState(const String state);
+  void setState(const String state, String reason="");
 
   String state_;
   uint8_t pinInvolt_ = 32;

@@ -89,20 +89,28 @@ void Solar::setup() {
     server_.sendHeader("Connection", "close");
     server_.send(200, "text/plain", (Update.hasError())?"FAIL":"OK");
     ESP.restart();
-  },[this](){
+  },[=](){
     HTTPUpload& upload = server_.upload();
-    if(upload.status == UPLOAD_FILE_START){
+    if (upload.status == UPLOAD_FILE_START){
       log(str("Update: %s\n", upload.filename.c_str()));
+      printPeriod_ = measperiod_ = 10000000;
+      nextPSUpdate_ = nextSolarAdjust_ = nextAutoSweep_ = millis() + 100000000;
       if (!Update.begin(UPDATE_SIZE_UNKNOWN))//start with max available size
         Update.printError(Serial);
     } else if (upload.status == UPLOAD_FILE_WRITE){
+      log(str("got write(size %d) at %d", upload.currentSize, Update.progress()));
       if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
         Update.printError(Serial);
     } else if(upload.status == UPLOAD_FILE_END){
-      if(Update.end(true))
+      if (Update.end(true))
         log(str("Update Success: %u\nRebooting...\n", upload.totalSize));
       else Update.printError(Serial);
-    }
+    } else if (upload.status == UPLOAD_FILE_ABORTED){
+      log("Update ABORTED, rebooting.");
+      Update.abort();
+      delay(500);
+      ESP.restart();
+    } else log(str("Update ELSE %d", upload.status));
   });
 
   pub_.loadPrefs();
@@ -278,14 +286,21 @@ void Solar::loop() {
 
     //update system states:
     if (state_ != States::sweeping && state_ != States::collapsemode) {
-      bool psuActive = (millis() - lastPSUSuccess_) < 11000;
-      if (psu_.outEn_ && psuActive) {
-        if      (psu_.outCurr_ > (currentCap_     * 0.95 )) setState(States::capped);
+      int lastPSUsecs = (millis() - lastPSUSuccess_) / 1000;
+      if (psu_.outEn_) {
+        if      (lastPSUsecs > 11) setState(States::error, "enabled but no PSU comms");
+        else if (psu_.outCurr_ > (currentCap_     * 0.95 )) setState(States::capped);
         else if (psu_.outVolt_ > (psu_.limitVolt_ * 0.999)) setState(States::full_cv);
         else setState(States::mppt);
-      } else if (!psuActive) {
-        if (inVolt_ < 1) setState(States::off); //diode connected, power supply is off when dark
-        else setState(States::error);
+      } else { //disabled
+        if ((inVolt_ > 1) && lastPSUsecs > 120) //psu active at least every 2m when shut down
+          setState(States::error, "inactive PSU");
+        else setState(States::off);
+      }
+      if ((inVolt_ > 1) && (lastPSUsecs > 5 * 60)) {
+        log("VERY UNRESPONSIVE PSU, RESTARTING");
+        delay(1000);
+        ESP.restart();
       }
     }
     lastV = millis();
@@ -442,10 +457,10 @@ void Solar::backoff(String reason) {
     psu_.enableOutput(false);
 }
 
-void Solar::setState(const String state) {
+void Solar::setState(const String state, String reason) {
   if (state_ != state) {
     pub_.setDirty("state");
-    log("state change to " + state + " (from " + state_ + ")");
+    log("state change to " + state + " (from " + state_ + ") " + reason);
   }
   state_ = state;
 }
