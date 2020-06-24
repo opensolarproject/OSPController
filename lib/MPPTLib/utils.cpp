@@ -1,4 +1,5 @@
-#include "Arduino.h"
+#include <Arduino.h>
+#include "publishable.h"
 #include "utils.h"
 
 
@@ -15,7 +16,7 @@ String str(const char *fmtStr, ...) {
   va_end(arg_ptr);
   return String(buf);
 }
-String str(std::string s) {
+String str(const std::string &s) {
   return String(s.c_str());
 }
 String str(bool v) {
@@ -24,6 +25,9 @@ String str(bool v) {
 
 // float lifepo4_soc[] = {13.4, 13.3, 13.28, 13.};
 
+Publishable* pub_; //static
+void log(const String &s) { pub_->log(s); }
+void addLogger(Publishable* p) { pub_ = p; }
 
 
 PowerSupply::PowerSupply(Stream &port) : _port(&port), debug_(false) { }
@@ -40,6 +44,7 @@ bool PowerSupply::doUpdate() {
   if (res && !limitVolt_) {
     handleReply(cmdReply("arc")); //read current limit
     handleReply(cmdReply("arv")); //read voltage limit
+    log(str("finished PSU begin, got %0.3fV %0.3fA limits\n", limitVolt_, limitCurr_));
   }
   return res;
 }
@@ -50,7 +55,7 @@ bool PowerSupply::getOutputEnabled() { return handleReply(cmdReply("aro")); }
 
 template<typename T>void setCheck(T &save, float in, float max) { if (in < max) save = in; }
 
-bool PowerSupply::handleReply(String msg) {
+bool PowerSupply::handleReply(const String &msg) {
   if (!msg.length()) return false;
   String hdr = msg.substring(0, 3);
   String body = msg.substring(3);
@@ -60,7 +65,7 @@ bool PowerSupply::handleReply(String msg) {
   else if (hdr == "#rv") setCheck(limitVolt_, body.toFloat() / 100.0, 80);
   else if (hdr == "#ra") setCheck(limitCurr_, body.toFloat() / 100.0, 15);
   else {
-    Serial.println("got unknown msg > '" + hdr + "' / '" + body + "'");
+    log("PSU got unknown msg > '" + hdr + "' / '" + body + "'");
     return false;
   }
   return true;
@@ -70,9 +75,9 @@ void PowerSupply::flush() {
   _port->flush();
 }
 
-String PowerSupply::cmdReply(String cmd) {
+String PowerSupply::cmdReply(const String &cmd) {
   _port->print(cmd + "\r\n");
-  if (debug_) Serial.println("> " + cmd + "CRLF");
+  if (debug_) log("PSU > " + cmd + "CRLF");
   String reply;
   uint32_t start = millis();
   char c;
@@ -83,10 +88,10 @@ String PowerSupply::cmdReply(String cmd) {
     String debug = reply;
     debug.replace("\r", "CR");
     debug.replace("\n", "NL");
-    Serial.println("< " + debug);
+    log("PSU < " + debug);
   }
   if (!reply.length() && debug_ && _port->available())
-    Serial.printf("nothing read.. stuff available!? %d", _port->available());
+    log("PSU nothing read.. stuff available!? " + String(_port->available()));
   reply.trim();
   return reply;
 }

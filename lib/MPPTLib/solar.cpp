@@ -23,16 +23,16 @@ uint32_t nextPSUpdate_ = 0, nextSolarAdjust_ = 1000;
 uint32_t lastPSUpdate_ = 0, lastPSUSuccess_ = 0;
 uint32_t nextAutoSweep_ = 0, lastAutoSweep_ = 0;
 double newDesiredCurr_ = 0;
-String logme;
 extern const String updateIndex;
 
 void Solar::setup() {
   Serial.begin(115200);
   Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
+  addLogger(&pub_); //sets global context
   delay(100);
   uint64_t chipid = ESP.getEfuseMac();
-  Serial.printf("startup, ID %08llX %04X\n", chipid, (uint16_t)(chipid >> 32));
-  Serial2.begin(4800, SERIAL_8N1, 16, 17, false, 1000);
+  log(str("startup, ID %08llX %04X\n", chipid, (uint16_t)(chipid >> 32)));
+  Serial2.begin(4800, SERIAL_8N1, -1, -1, false, 1000);
   analogSetCycles(32);
 
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info){
@@ -121,10 +121,10 @@ void Solar::setup() {
 
   if (!psu_.begin())
     log("PSU begin failed");
-  newDesiredCurr_ = currFilt_ = psu_.outCurr_;
+  newDesiredCurr_ = currFilt_ = psu_.limitCurr_ = psu_.outCurr_;
   log(str("startup current is %0.3fAdes/%0.3fAfilt/%0.3fAout", newDesiredCurr_, currFilt_, psu_.outCurr_));
   nextAutoSweep_ = millis() + 10000;
-  Serial.println("finished setup");
+  log("finished setup");
   log("OSPController Version " GIT_VERSION);
 }
 
@@ -136,20 +136,20 @@ void Solar::doConnect() {
       String hostname = str("mpptESP-%02X", chipid & 0xff);
       WiFi.setHostname(hostname.c_str());
       if (WiFi.waitForConnectResult() == WL_CONNECTED) {
-        Serial.println("Wifi connected! hostname: " + hostname);
-        Serial.println("IP: " + WiFi.localIP().toString());
+        log("Wifi connected! hostname: " + hostname);
+        log("IP: " + WiFi.localIP().toString());
         MDNS.begin("mppt");
         MDNS.addService("http", "tcp", 80);
         server_.begin();
       }
-    } else Serial.println("no wifiap or wifipass set!");
+    } else log("no wifiap or wifipass set!");
   }
   if (WiFi.isConnected() && !db_.client.connected()) {
     if (db_.serv.length() && db_.feed.length()) {
-      Serial.println("Connecting MQTT to " + db_.user + "@" + db_.serv);
+      log("Connecting MQTT to " + db_.user + "@" + db_.serv);
       db_.client.setServer(db_.getEndpoint().c_str(), db_.getPort());
       if (db_.client.connect("MPPT", db_.user.c_str(), db_.pass.c_str())) {
-        Serial.println("PubSub connect success! " + db_.client.state());
+        log("PubSub connect success! " + db_.client.state());
         auto pubs = pub_.items(true);
         for (auto i : pubs)
           if (i->pref_)
@@ -167,7 +167,7 @@ String SPoint::toString() const {
 void Solar::applyAdjustment() {
   if (newDesiredCurr_ != psu_.limitCurr_) {
     if (psu_.setCurrent(newDesiredCurr_))
-      logme += str("[adjusting %0.2fA (from %0.2fA)] ", newDesiredCurr_ - psu_.limitCurr_, psu_.limitCurr_);
+      pub_.logNote(str("[adjusting %0.2fA (from %0.2fA)] ", newDesiredCurr_ - psu_.limitCurr_, psu_.limitCurr_));
     else log("error setting current");
     delay(50);
     psu_.readCurrent();
@@ -211,7 +211,7 @@ void Solar::doSweepStep() {
   int collapsedPoints = 0;
   for (int i = 0; i < sweepPoints_.size(); i++)
     if (sweepPoints_[i].collapsed) collapsedPoints++;
-  if (isCollapsed) logme += str("COLLAPSED[%d] ", collapsedPoints);
+  if (isCollapsed) pub_.logNote(str("COLLAPSED[%d] ", collapsedPoints));
 
   if (isCollapsed && collapsedPoints >= 2) { //great, sweep finished
     int maxIndex = 0;
@@ -255,8 +255,8 @@ bool Solar::hasCollapsed() const {
     return true;
   float vunder = psu_.outVolt_ / psu_.limitVolt_;
   float cunder = psu_.outCurr_ / psu_.limitCurr_;
-  if (psu_.debug_) Serial.printf("hasCollapsed under[v%0.3f c%0.3f] PSU[%0.3fV %0.3fVlim %0.3fA %0.3fClim]",
-      vunder, cunder, psu_.outVolt_, psu_.limitVolt_,psu_.outCurr_, psu_.limitCurr_);
+  if (psu_.debug_) log(str("hasCollapsed under[v%0.3f c%0.3f] PSU[%0.3fV %0.3fVlim %0.3fA %0.3fClim]",
+      vunder, cunder, psu_.outVolt_, psu_.limitVolt_,psu_.outCurr_, psu_.limitCurr_));
   if (psu_.limitCurr_ > 1.5 && (vunder < 0.9) && (cunder < 0.7) && (inVolt_ < (psu_.outVolt_ * 1.25)))
     return true;
   return false;
@@ -278,7 +278,7 @@ void Solar::loop() {
       if (error > 0.3 || (-error > 0.2)) { //adjustment deadband, more sensitive when needing to ramp down
         newDesiredCurr_ = min(psu_.limitCurr_ + dcurr, currentCap_);
         if (error < 0.6) { //ramp down, quick!
-          logme += "[QUICK] ";
+          pub_.logNote("[QUICK] ");
           nextSolarAdjust_ = now;
         }
       }
@@ -338,7 +338,7 @@ void Solar::loop() {
           applyAdjustment();
     }
     if (collapses_.size() && (millis() - collapses_.front()) > (5 * 60000)) { //5m age
-      logme += str("[clear collapse (%ds ago)]", (now - collapses_.pop_front())/1000);
+      pub_.logNote(str("[clear collapse (%ds ago)]", (now - collapses_.pop_front())/1000));
       pub_.setDirty("collapses");
     }
     heap_caps_check_integrity_all(true);
@@ -412,19 +412,18 @@ void Solar::publishTask() {
           wins += db_.client.publish((db_.feed + "/" + (i->pref_? "prefs/":"") + i->key).c_str(), i->toString().c_str(), true)? 1 : 0;
           if (i->pref_) ignoreSubsUntil_ = now + 3000;
         }
-        logme += str("[published %d] ", wins);
+        pub_.logNote(str("[published %d] ", wins));
         pub_.clearDirty();
       } else {
-        logme += "[pub disconnected] ";
+        pub_.logNote("[pub disconnected] ");
         doConnect();
       }
       heap_caps_check_integrity_all(true);
       lastpub = now;
     }
-    if (db_.client.connected() && logPub_.size()) {
-      String s = logPub_.pop_front();
+    String s;
+    while (db_.client.connected() && pub_.popLog(&s))
       db_.client.publish((db_.feed + "/log").c_str(), s.c_str(), false);
-    }
     db_.client.loop();
     pub_.poll(&Serial);
     server_.handleClient();
@@ -436,15 +435,9 @@ void Solar::printStatus() {
   String s = state_;
   s.toUpperCase();
   s += str(" %0.1fVin -> %0.2fWh <%0.2fV out %0.2fA %den> ", inVolt_, wh_, psu_.outVolt_, psu_.outCurr_, psu_.outEn_);
-  s += logme;
-  logme = ""; //clear
-  Serial.println(s);
-  if (psu_.debug_) logPub_.push_back(s);
-}
-
-void Solar::log(String s) {
-  Serial.println(s);
-  logPub_.push_back(s);
+  s += pub_.popNotes();
+  if (psu_.debug_) log(s);
+  else Serial.println(s);
 }
 
 void Solar::backoff(String reason) {

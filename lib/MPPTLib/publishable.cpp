@@ -37,7 +37,7 @@ template<> void Pub<String*>::load(Preferences&p) {
   (*value) = String(buf);
 }
 
-Publishable::Publishable() {
+Publishable::Publishable() : lock_(xSemaphoreCreateCounting( 10, 0 )) {
   add("save", [this](String s){
     return str("saved %d prefs", this->savePrefs());
   }).hide();
@@ -46,6 +46,38 @@ Publishable::Publishable() {
   }).hide();
   add("help", [this](String s){ printHelp(); return ""; }).hide();
   add("list", [this](String s){ printHelp(); return ""; }).hide();
+}
+
+void Publishable::log(const String &s) {
+  Serial.println(s);
+  if (xSemaphoreTake(lock_, (TickType_t) 10) == pdTRUE) {
+    logPub_.push_back(s);
+    xSemaphoreGive(lock_);
+  }
+}
+bool Publishable::popLog(String *s) {
+  if (xSemaphoreTake(lock_, (TickType_t) 10) == pdTRUE) {
+    bool got = logPub_.size() > 0;
+    if (got) (*s) = logPub_.pop_front();
+    xSemaphoreGive(lock_);
+    return got;
+  }
+  return false;
+}
+void Publishable::logNote(const String &s) {
+  if (xSemaphoreTake(lock_, (TickType_t) 10) == pdTRUE) {
+    logNote_ += s;
+    xSemaphoreGive(lock_);
+  }
+}
+String Publishable::popNotes() {
+  if (xSemaphoreTake(lock_, (TickType_t) 10) == pdTRUE) {
+    String ret = logNote_;
+    logNote_ = "";
+    xSemaphoreGive(lock_);
+    return ret;
+  }
+  return "";
 }
 
 PubItem& Publishable::add(PubItem* p) { items_[p->key] = p; return *p; }

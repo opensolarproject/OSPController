@@ -1,5 +1,7 @@
 #pragma once
-#include "Arduino.h"
+#include <Arduino.h>
+
+class Publishable;
 
 class PowerSupply {
     Stream *_port;
@@ -12,7 +14,7 @@ class PowerSupply {
     PowerSupply(Stream &port);
     bool begin();
 
-    String cmdReply(String cmd);
+    String cmdReply(const String &cmd);
     bool setVoltage(float);
     bool setCurrent(float);
     bool enableOutput(bool);
@@ -24,16 +26,19 @@ class PowerSupply {
     void flush();
 
   private:
-    bool handleReply(String);
+    bool handleReply(const String &);
     String fourCharStr(uint16_t input);
 };
+
+void log(const String &);
+void addLogger(Publishable*);
 
 float mapfloat(long x, long in_min, long in_max, long out_min, long out_max);
 
 extern const char* adafruitRootCert;
 
 String str(const char *fmtStr, ...);
-String str(std::string s);
+String str(const std::string &s);
 String str(bool v);
 
 

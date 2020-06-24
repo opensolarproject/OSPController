@@ -3,6 +3,7 @@
 #include <functional>
 #include <map>
 #include <list>
+#include "utils.h"
 
 class PubSubClient;
 class WebServer;
@@ -56,10 +57,18 @@ public:
   void clearDirty();
   void printHelp() const;
 
+  void log(const String &);
+  bool popLog(String*);
+  void logNote(const String &); //adds note to next status
+  String popNotes();
+  // void log(const char *fmtStr, ...);
 
 private:
   PubItem& add(PubItem*);
   std::map<String, PubItem*> items_;
   int defaultPeriod_ = 12000;
+  String logNote_;
+  CircularArray<String, 16> logPub_;
+  SemaphoreHandle_t lock_;
 };
 

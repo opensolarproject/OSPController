@@ -33,8 +33,6 @@ public:
   bool hasCollapsed() const;
   int getCollapses() const;
 
-  void log(String s);
-  // void log(const char *fmtStr, ...);
   void backoff(String reason);
   void setState(const String state, String reason="");
 
@@ -49,7 +47,6 @@ public:
   int autoSweep_ = 10 * 60; //every 10m
   float vadjust_ = 116.50;
   CircularArray<SPoint, 10> sweepPoints_; //size here is important, larger == more stable setpoint
-  CircularArray<String, 16> logPub_;
   String wifiap, wifipass;
   uint32_t ignoreSubsUntil_ = 0;
   int8_t backoffLevel_ = 0;
