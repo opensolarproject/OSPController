@@ -69,6 +69,7 @@ void Solar::setup() {
   pub_.add("restart",[](String s){ ESP.restart(); return ""; }).hide();
   pub_.add("clear",[=](String s){ pub_.clearPrefs(); return "cleared"; }).hide();
   pub_.add("debug",[=](String s){ psu_.debug_ = !(s == "off"); return String(psu_.debug_); }).hide();
+  pub_.add("version",[=](String){ log("Version " GIT_VERSION); return GIT_VERSION; }).hide();
 
   server_.on("/", HTTP_ANY, [=]() {
     log("got req " + server_.uri() + " -> " + server_.hostHeader());
