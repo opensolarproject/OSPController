@@ -60,6 +60,16 @@ bool PowerSupply::doUpdate() {
   return res;
 }
 
+bool PowerSupply::isCV() const { return ((limitVolt_ - outVolt_) / limitVolt_) < 0.003; }
+bool PowerSupply::isCC() const { return ((limitCurr_ - outCurr_) / limitCurr_) < 0.01; }
+bool PowerSupply::isCollapsed() const { return outEn_ && !isCV() && !isCC(); }
+
+String PowerSupply::toString() const {
+  return str("PSU-out[%0.2fV %0.2fA]-lim[%0.2fV %0.2fA]", outVolt_, outCurr_, limitVolt_, limitCurr_)
+    + (outEn_? " ENABLED":"") + (isCV()? " CV":"") + (isCC()? " CC":"") + (isCollapsed()? " CLPS":"");
+}
+
+
 bool PowerSupply::readVoltage() { return handleReply(cmdReply("aru")); }
 bool PowerSupply::readCurrent() { return handleReply(cmdReply("ari")); }
 bool PowerSupply::getOutputEnabled() { return handleReply(cmdReply("aro")); }

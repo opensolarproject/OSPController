@@ -25,6 +25,11 @@ class PowerSupply {
     bool getOutputEnabled();
     void flush();
 
+	bool isCV() const;
+	bool isCC() const;
+	bool isCollapsed() const;
+	String toString() const;
+
   private:
     bool handleReply(const String &);
     String fourCharStr(uint16_t input);

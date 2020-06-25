@@ -205,6 +205,9 @@ void Solar::doSweepStep() {
     setState(States::mppt);
     log(str("SWEEP DONE, currentcap of %0.1fA reached (setpoint=%0.3f)", currentCap_, setpoint_));
     return applyAdjustment();
+  } else if (psu_.isCV()) {
+    setState(States::full_cv);
+    return log("SWEEP DONE, constant-voltage state reached");
   }
   psu_.doUpdate();
 
@@ -253,13 +256,8 @@ void Solar::doSweepStep() {
 
 bool Solar::hasCollapsed() const {
   if (!psu_.outEn_) return false;
-  if (inVolt_ < (psu_.outVolt_ * 1.11)) //simple voltage match method
-    return true;
-  float vunder = psu_.outVolt_ / psu_.limitVolt_;
-  float cunder = psu_.outCurr_ / psu_.limitCurr_;
-  if (psu_.debug_) log(str("hasCollapsed under[v%0.3f c%0.3f] PSU[%0.3fV %0.3fVlim %0.3fA %0.3fClim]",
-      vunder, cunder, psu_.outVolt_, psu_.limitVolt_,psu_.outCurr_, psu_.limitCurr_));
-  if (psu_.limitCurr_ > 1.5 && (vunder < 0.9) && (cunder < 0.7) && (inVolt_ < (psu_.outVolt_ * 1.25)))
+  bool simpleClps = (inVolt_ < (psu_.outVolt_ * 1.11)); //simple voltage match method
+  if (simpleClps || psu_.isCollapsed())
     return true;
   return false;
 }
@@ -292,7 +290,7 @@ void Solar::loop() {
       if (psu_.outEn_) {
         if      (lastPSUsecs > 11) setState(States::error, "enabled but no PSU comms");
         else if (psu_.outCurr_ > (currentCap_     * 0.95 )) setState(States::capped);
-        else if (psu_.outVolt_ > (psu_.limitVolt_ * 0.999)) setState(States::full_cv);
+        else if (psu_.isCV()) setState(States::full_cv);
         else setState(States::mppt);
       } else { //disabled
         if ((inVolt_ > 1) && lastPSUsecs > 120) //psu active at least every 2m when shut down
@@ -438,7 +436,7 @@ void Solar::publishTask() {
 void Solar::printStatus() {
   String s = state_;
   s.toUpperCase();
-  s += str(" %0.1fVin -> %0.2fWh <%0.2fV out %0.2fA %den> ", inVolt_, wh_, psu_.outVolt_, psu_.outCurr_, psu_.outEn_);
+  s += str(" %0.1fVin -> %0.2fWh ", inVolt_, wh_) + psu_.toString();
   s += pub_.popNotes();
   if (psu_.debug_) log(s);
   else Serial.println(s);
