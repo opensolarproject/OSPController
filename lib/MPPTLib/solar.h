@@ -35,7 +35,7 @@ public:
   int getCollapses() const;
   void doUpdate(String url);
 
-  void backoff(String reason);
+  int getBackoff(int period) const;
   void setState(const String state, String reason="");
 
   String state_;

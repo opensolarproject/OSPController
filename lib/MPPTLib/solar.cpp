@@ -20,13 +20,17 @@ Solar::Solar() :
 void runPubt(void*c) { ((Solar*)c)->publishTask(); }
 
 //TODO: make these class members instead?
-uint32_t lastV = 0, lastpub = 20000, lastLog_ = 0;
+uint32_t nextVmeas_ = 0, nextPub_ = 20000, nextPrint_ = 0;
 uint32_t nextPSUpdate_ = 0, nextSolarAdjust_ = 1000;
 uint32_t lastPSUpdate_ = 0, lastPSUSuccess_ = 0;
 uint32_t nextAutoSweep_ = 0, lastAutoSweep_ = 0;
 double newDesiredCurr_ = 0;
 extern const String updateIndex;
 String doOTAUpdate_ = "";
+
+class Backoff : public std::runtime_error { public:
+  Backoff(String s) : std::runtime_error(s.c_str()) { }
+};
 
 void Solar::setup() {
   Serial.begin(115200);
@@ -274,7 +278,7 @@ void Solar::loop() {
   if (doOTAUpdate_.length())
     return delay(100);
 
-  if ((now - lastV) >= ((state_ == States::sweeping)? measperiod_ * 4 : measperiod_)) {
+  if (now > nextVmeas_) {
     int analogval = analogRead(pinInvolt_);
     inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
     pub_.setDirtyAddr(&inVolt_);
@@ -311,52 +315,59 @@ void Solar::loop() {
         ESP.restart();
       }
     }
-    lastV = millis();
+    nextVmeas_ = now + ((state_ == States::sweeping)? measperiod_ * 4 : measperiod_);
   }
 
   if (now > nextSolarAdjust_) {
-    if (state_ == States::error) {
-      if ((now - lastPSUSuccess_) < 30000) { //for 30s after failure try and shut it down
-        psu_.enableOutput(false);
-        psu_.setCurrent(0);
-        return backoff("PSU failure, disabling");
-      }
-    } else if (setpoint_ > 0 && (state_ != States::sweeping)) {
-      if (hasCollapsed() && state_ != States::collapsemode) {
-        newDesiredCurr_ = currFilt_ * 0.95; //restore at 90% of previous point
-        collapses_.push_back(now);
-        pub_.setDirty("collapses");
-        log(str("collapsed! %0.1fV [%0.1fV %0.1fVlim %0.1fA %0.1fVlim] set recovery to %0.1fA", inVolt_, psu_.outVolt_, psu_.limitVolt_,psu_.outCurr_, psu_.limitCurr_, newDesiredCurr_));
-        psu_.enableOutput(false);
-        psu_.setCurrent(newDesiredCurr_);
-      } else if (!psu_.outEn_) { //power supply is off. let's check about turning it on
-        if (inVolt_ < psu_.outVolt_ || psu_.outVolt_ < 0.1) {
-          return backoff("not starting up, input voltage too low (is it dark?)");
-        } else if ((psu_.outVolt_ > psu_.limitVolt_) || (psu_.outVolt_ < (psu_.limitVolt_ * 0.60) && psu_.outVolt_ > 1)) {
-          //li-ion 4.1-2.5 is 60% of range. the last && condition allows system to work with battery drain diode in place
-          return backoff(str("not starting up, battery %0.1fV too far from Supply limit %0.1fV. ", psu_.outVolt_, psu_.limitVolt_) +
-          "Use outvolt command (or PSU buttons) to set your appropiate battery voltage and restart");
-        } else {
-          log("restoring from collapse");
-          psu_.enableOutput(true);
+    try {
+      if (state_ == States::error) {
+        if ((now - lastPSUSuccess_) < 30000) { //for 30s after failure try and shut it down
+          psu_.enableOutput(false);
+          psu_.setCurrent(0);
+          throw Backoff("PSU failure, disabling");
+        }
+      } else if (setpoint_ > 0 && (state_ != States::sweeping)) {
+        if (hasCollapsed() && state_ != States::collapsemode) {
+          newDesiredCurr_ = currFilt_ * 0.95; //restore at 90% of previous point
+          collapses_.push_back(now);
+          pub_.setDirty("collapses");
+          log(str("collapsed! %0.2fV set recovery to %0.1fA ", inVolt_, newDesiredCurr_) + psu_.toString());
+          psu_.enableOutput(false);
+          psu_.setCurrent(newDesiredCurr_);
+        } else if (!psu_.outEn_) { //power supply is off. let's check about turning it on
+          if (inVolt_ < psu_.outVolt_ || psu_.outVolt_ < 0.1) {
+            throw Backoff("not starting up, input voltage too low (is it dark?)");
+          } else if ((psu_.outVolt_ > psu_.limitVolt_) || (psu_.outVolt_ < (psu_.limitVolt_ * 0.60) && psu_.outVolt_ > 1)) {
+            //li-ion 4.1-2.5 is 60% of range. the last && condition allows system to work with battery drain diode in place
+            throw Backoff(str("not starting up, battery %0.1fV too far from Supply limit %0.1fV. ", psu_.outVolt_, psu_.limitVolt_) +
+            "Use outvolt command (or PSU buttons) to set your appropiate battery voltage and restart");
+          } else {
+            log("restoring from collapse");
+            psu_.enableOutput(true);
+          }
+        }
+        if (psu_.outEn_ && state_ != States::collapsemode) {
+          applyAdjustment();
         }
       }
-
-      if (psu_.outEn_ && state_ != States::collapsemode)
-          applyAdjustment();
+      backoffLevel_ = max(backoffLevel_ - 1, 0); //successes means less backoff
+    } catch (const Backoff &b) {
+      backoffLevel_ = min(backoffLevel_ + 1, 8);
+      log(str("backoff now at %ds: ", getBackoff(adjustPeriod_) / 1000) + String(b.what()));
     }
     if (collapses_.size() && (millis() - collapses_.front()) > (5 * 60000)) { //5m age
       pub_.logNote(str("[clear collapse (%ds ago)]", (now - collapses_.pop_front())/1000));
       pub_.setDirty("collapses");
     }
     heap_caps_check_integrity_all(true);
-    backoffLevel_ = max(backoffLevel_ - 1, 0); //successes means no more backoff!
-    nextSolarAdjust_ = now + adjustPeriod_;
+    nextSolarAdjust_ = now + getBackoff(adjustPeriod_);
   }
-  if ((now - lastLog_) >= printPeriod_) {
+
+  if (now > nextPrint_) {
     printStatus();
-    lastLog_ = now;
+    nextPrint_ = now + printPeriod_;
   }
+
   if (now > nextPSUpdate_) {
     bool res = psu_.doUpdate();
     if (res) {
@@ -369,7 +380,7 @@ void Solar::loop() {
       log("psu update fail" + String(psu_.debug_? " serial debug output enabled" : ""));
       psu_.flush();
     }
-    nextPSUpdate_ = now + 5000;
+    nextPSUpdate_ = now + min(getBackoff(5000), 100000); //100s
     lastPSUpdate_ = now;
   }
 
@@ -420,7 +431,7 @@ void Solar::publishTask() {
 
   while (true) {
     uint32_t now = millis();
-    if ((now - lastpub) >= (psu_.outEn_? db_.period : db_.period * 4)) { //slow-down when not enabled
+    if (now > nextPub_) {
       while (doOTAUpdate_ == " ") //stops this task while an upload-OTA is running
         delay(1000);
       if (doOTAUpdate_.length()) {
@@ -442,7 +453,7 @@ void Solar::publishTask() {
       }
       sendOutgoingLogs();
       heap_caps_check_integrity_all(true);
-      lastpub = now;
+      nextPub_ = now + (psu_.outEn_? db_.period : db_.period * 4); //slower when disabled
     }
     db_.client.loop();
     pub_.poll(&Serial);
@@ -460,14 +471,9 @@ void Solar::printStatus() {
   else Serial.println(s);
 }
 
-void Solar::backoff(String reason) {
-  backoffLevel_ = min(backoffLevel_ + 1, 8);
-  int back = (backoffLevel_ * backoffLevel_) / 2;
-  log(str("backoff %ds: ", back * adjustPeriod_ / 1000) + reason);
-  nextSolarAdjust_ = millis() + back * adjustPeriod_; //big backoff
-  nextPSUpdate_ = nextSolarAdjust_; //backoff this too
-  if (psu_.outEn_)
-    psu_.enableOutput(false);
+int Solar::getBackoff(int period) const {
+  if (backoffLevel_ <= 0) return period;
+  return ((backoffLevel_ * backoffLevel_ + 2) / 2) * period;
 }
 
 void Solar::setState(const String state, String reason) {
