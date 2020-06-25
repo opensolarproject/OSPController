@@ -1,8 +1,8 @@
 #include <solar.h>
 
-Solar controller;
+//GIT_VERSION pulled from platformio.ini src_build_flags, only for this file
+Solar controller(GIT_VERSION);
 
-// int main(int argc, char** argv) { }
 void setup() {
   controller.setup();
 }

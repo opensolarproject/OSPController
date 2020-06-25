@@ -8,7 +8,8 @@
 
 WiFiClient espClient;
 
-Solar::Solar() :
+Solar::Solar(String version) :
+        version_(version),
         state_(States::off),
         psu_(Serial2),
         server_(80),
@@ -76,7 +77,7 @@ void Solar::setup() {
   pub_.add("restart",[](String s){ ESP.restart(); return ""; }).hide();
   pub_.add("clear",[=](String s){ pub_.clearPrefs(); return "cleared"; }).hide();
   pub_.add("debug",[=](String s){ psu_.debug_ = !(s == "off"); return String(psu_.debug_); }).hide();
-  pub_.add("version",[=](String){ log("Version " GIT_VERSION); return GIT_VERSION; }).hide();
+  pub_.add("version",[=](String){ log("Version " + version_); return version_; }).hide();
   pub_.add("update",[=](String s){ doOTAUpdate_ = s; return "OK, will try "+s; }).hide();
   pub_.add("uptime",[=](String){ String ret = "Uptime " + timeAgo(millis()/1000); log(ret); return ret; }).hide();
 
@@ -135,7 +136,7 @@ void Solar::setup() {
   log(str("startup current is %0.3fAdes/%0.3fAfilt/%0.3fAout", newDesiredCurr_, psu_.currFilt_, psu_.outCurr_));
   nextAutoSweep_ = millis() + 10000;
   log("finished setup");
-  log("OSPController Version " GIT_VERSION);
+  log("OSPController Version " + version_);
 }
 
 void Solar::doConnect() {
@@ -498,7 +499,7 @@ void Solar::doUpdate(String url) {
   sendOutgoingLogs(); //send any outstanding log() messages
   db_.client.disconnect(); //helps to disconnect everything
   esp_task_wdt_init(120, true); //way longer watchdog timeout
-  t_httpUpdate_return ret = httpUpdate.update(espClient, url, GIT_VERSION);
+  t_httpUpdate_return ret = httpUpdate.update(espClient, url, version_);
   if (ret == HTTP_UPDATE_FAILED) {
     log(str("[OTA] Error (%d):", httpUpdate.getLastError()) + httpUpdate.getLastErrorString());
   } else if (ret == HTTP_UPDATE_NO_UPDATES) {

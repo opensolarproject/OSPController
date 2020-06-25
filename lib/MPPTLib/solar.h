@@ -21,7 +21,7 @@ struct SPoint {
 
 class Solar {
 public:
-  Solar();
+  Solar(String version);
   void setup();
   void loop();
   void sendOutgoingLogs();
@@ -38,6 +38,7 @@ public:
   int getBackoff(int period) const;
   void setState(const String state, String reason="");
 
+  const String version_;
   String state_;
   uint8_t pinInvolt_ = 32;
   float inVolt_ = 0;
