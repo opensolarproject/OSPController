@@ -9,7 +9,9 @@ class PowerSupply {
     bool debug_;
     float outVolt_ = 0, outCurr_ = 0;
     float limitVolt_ = 0, limitCurr_ = 0;
+	float currFilt_ = 0.0, wh_ = 0;
     bool outEn_ = false;
+	uint32_t lastSuccess_ = 0, lastAmpUpdate_ = 0;
 
     PowerSupply(Stream &port);
     bool begin();

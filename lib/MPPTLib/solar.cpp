@@ -22,7 +22,6 @@ void runPubt(void*c) { ((Solar*)c)->publishTask(); }
 //TODO: make these class members instead?
 uint32_t nextVmeas_ = 0, nextPub_ = 20000, nextPrint_ = 0;
 uint32_t nextPSUpdate_ = 0, nextSolarAdjust_ = 1000;
-uint32_t lastPSUpdate_ = 0, lastPSUSuccess_ = 0;
 uint32_t nextAutoSweep_ = 0, lastAutoSweep_ = 0;
 double newDesiredCurr_ = 0;
 extern const String updateIndex;
@@ -57,7 +56,7 @@ void Solar::setup() {
   pub_.add("outcurr", [=](String s){ if (s.length()) psu_.setCurrent(s.toFloat()); return String(psu_.outCurr_); });
   pub_.add("outpower",[=](String){ return String(psu_.outVolt_ * psu_.outCurr_); });
   pub_.add("state",      state_          );
-  pub_.add("currFilt",   currFilt_       );
+  pub_.add("currFilt",   psu_.currFilt_       );
   pub_.add("pgain",      pgain_          ).pref();
   pub_.add("ramplimit",  ramplimit_      ).pref();
   pub_.add("setpoint",   setpoint_       ).pref();
@@ -69,7 +68,7 @@ void Solar::setup() {
   pub_.add("autosweep",  autoSweep_      ).pref();
   pub_.add("currentcap", currentCap_     ).pref();
   pub_.add("involt",  inVolt_);
-  pub_.add("wh",      wh_    );
+  pub_.add("wh",      psu_.wh_    );
   pub_.add("collapses", [=](String) { return String(getCollapses()); });
   pub_.add("sweep",[=](String){ startSweep(); return "starting sweep"; }).hide();
   pub_.add("connect",[=](String s){ doConnect(); return "connected"; }).hide();
@@ -132,8 +131,8 @@ void Solar::setup() {
 
   if (!psu_.begin())
     log("PSU begin failed");
-  newDesiredCurr_ = currFilt_ = psu_.limitCurr_ = psu_.outCurr_;
-  log(str("startup current is %0.3fAdes/%0.3fAfilt/%0.3fAout", newDesiredCurr_, currFilt_, psu_.outCurr_));
+  newDesiredCurr_ = psu_.currFilt_ = psu_.limitCurr_ = psu_.outCurr_;
+  log(str("startup current is %0.3fAdes/%0.3fAfilt/%0.3fAout", newDesiredCurr_, psu_.currFilt_, psu_.outCurr_));
   nextAutoSweep_ = millis() + 10000;
   log("finished setup");
   log("OSPController Version " GIT_VERSION);
@@ -178,7 +177,7 @@ String SPoint::toString() const {
 void Solar::applyAdjustment() {
   if (newDesiredCurr_ != psu_.limitCurr_) {
     if (psu_.setCurrent(newDesiredCurr_))
-      pub_.logNote(str("[adjusting %0.2fA (from %0.2fA)]", newDesiredCurr_ - psu_.limitCurr_, psu_.limitCurr_));
+      pub_.logNote(str("[adjusting %0.3fA (from %0.3fA)]", newDesiredCurr_ - psu_.limitCurr_, psu_.limitCurr_));
     else log("error setting current");
     delay(50);
     psu_.readCurrent();
@@ -193,7 +192,7 @@ void Solar::startSweep() {
   log(str("SWEEP START c=%0.3f, (setpoint was %0.3f)", newDesiredCurr_, setpoint_));
   if (state_ == States::collapsemode) {
     psu_.enableOutput(false);
-    psu_.setCurrent(currFilt_* 0.75);
+    psu_.setCurrent(psu_.currFilt_* 0.75);
     delay(200);
     log(str("First coming out of collapse-mode to clim of %0.2fA", psu_.limitCurr_));
   }
@@ -248,7 +247,7 @@ void Solar::doSweepStep() {
       log("Using safe max point of " + sweepPoints_[maxIndex].toString());
       setState(States::mppt);
       psu_.enableOutput(false);
-      psu_.setCurrent(sweepPoints_[maxIndex].i * 0.98);
+      psu_.setCurrent(sweepPoints_[maxIndex].i * 0.90);
       delay(300);
       psu_.enableOutput(true);
       delay(300);
@@ -266,8 +265,13 @@ void Solar::doSweepStep() {
 bool Solar::hasCollapsed() const {
   if (!psu_.outEn_) return false;
   bool simpleClps = (inVolt_ < (psu_.outVolt_ * 1.11)); //simple voltage match method
-  if (simpleClps || psu_.isCollapsed())
+  float collapsePct = (inVolt_ - psu_.outVolt_) / psu_.outVolt_;
+  if (simpleClps && psu_.isCollapsed())
     return true;
+  if ((collapsePct < 0.05) && psu_.isCollapsed()) { //secondary method
+    log(str("hasCollapsed used secondary method. collapse %0.3f%%", collapsePct));
+    return true;
+  }
   return false;
 }
 
@@ -298,7 +302,7 @@ void Solar::loop() {
 
     //update system states:
     if (state_ != States::sweeping && state_ != States::collapsemode) {
-      int lastPSUsecs = (millis() - lastPSUSuccess_) / 1000;
+      int lastPSUsecs = (millis() - psu_.lastSuccess_) / 1000;
       if (psu_.outEn_) {
         if      (lastPSUsecs > 11) setState(States::error, "enabled but no PSU comms");
         else if (psu_.outCurr_ > (currentCap_     * 0.95 )) setState(States::capped);
@@ -321,14 +325,14 @@ void Solar::loop() {
   if (now > nextSolarAdjust_) {
     try {
       if (state_ == States::error) {
-        if ((now - lastPSUSuccess_) < 30000) { //for 30s after failure try and shut it down
+        if ((now - psu_.lastSuccess_) < 30000) { //for 30s after failure try and shut it down
           psu_.enableOutput(false);
           psu_.setCurrent(0);
           throw Backoff("PSU failure, disabling");
         }
       } else if (setpoint_ > 0 && (state_ != States::sweeping)) {
         if (hasCollapsed() && state_ != States::collapsemode) {
-          newDesiredCurr_ = currFilt_ * 0.95; //restore at 90% of previous point
+          newDesiredCurr_ = psu_.currFilt_ * 0.95; //restore at 90% of previous point
           collapses_.push_back(now);
           pub_.setDirty("collapses");
           log(str("collapsed! %0.2fV set recovery to %0.1fA ", inVolt_, newDesiredCurr_) + psu_.toString());
@@ -371,17 +375,13 @@ void Solar::loop() {
   if (now > nextPSUpdate_) {
     bool res = psu_.doUpdate();
     if (res) {
-      wh_ += psu_.outVolt_ * psu_.outCurr_ * (now - lastPSUpdate_) / 1000.0 / 60 / 60;
-      currFilt_ = currFilt_ - 0.1 * (currFilt_ - psu_.outCurr_);
       pub_.setDirty({"outvolt", "outcurr", "outputEN", "outpower", "currFilt"});
-      if (millis() > ignoreSubsUntil_) pub_.setDirtyAddr(&wh_); //don't publish at first
-      lastPSUSuccess_ = now;
+      if (millis() > ignoreSubsUntil_) pub_.setDirty("wh"); //don't publish at first
     } else {
       log("psu update fail" + String(psu_.debug_? " serial debug output enabled" : ""));
       psu_.flush();
     }
     nextPSUpdate_ = now + min(getBackoff(5000), 100000); //100s
-    lastPSUpdate_ = now;
   }
 
   if (getCollapses() > 2)
@@ -415,7 +415,7 @@ void Solar::publishTask() {
     String topic(topicbuf), val = str(std::string((char*)buf, len));
     log("got sub value " + topic + " -> " + val);
     if (topic == (db_.feed + "/wh")) {
-      wh_ = (millis() > ignoreSubsUntil_)? val.toFloat() : wh_ + val.toFloat();
+      psu_.wh_ = (millis() > ignoreSubsUntil_)? val.toFloat() : psu_.wh_ + val.toFloat();
       log("restored wh value to " + val);
       db_.client.unsubscribe((db_.feed + "/wh").c_str());
     } else if (millis() > ignoreSubsUntil_) { //don't load old values
@@ -465,7 +465,7 @@ void Solar::publishTask() {
 void Solar::printStatus() {
   String s = state_;
   s.toUpperCase();
-  s += str(" %0.1fVin -> %0.2fWh ", inVolt_, wh_) + psu_.toString();
+  s += str(" %0.1fVin -> %0.2fWh ", inVolt_, psu_.wh_) + psu_.toString();
   s += pub_.popNotes();
   if (psu_.debug_) log(s);
   else Serial.println(s);

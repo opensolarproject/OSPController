@@ -60,8 +60,8 @@ bool PowerSupply::doUpdate() {
   return res;
 }
 
-bool PowerSupply::isCV() const { return ((limitVolt_ - outVolt_) / limitVolt_) < 0.003; }
-bool PowerSupply::isCC() const { return ((limitCurr_ - outCurr_) / limitCurr_) < 0.01; }
+bool PowerSupply::isCV() const { return ((limitVolt_ - outVolt_) / limitVolt_) < 0.004; }
+bool PowerSupply::isCC() const { return ((limitCurr_ - outCurr_) / limitCurr_) < 0.02; }
 bool PowerSupply::isCollapsed() const { return outEn_ && !isCV() && !isCC(); }
 
 String PowerSupply::toString() const {
@@ -82,13 +82,18 @@ bool PowerSupply::handleReply(const String &msg) {
   String body = msg.substring(3);
   if      (hdr == "#ro") setCheck(outEn_, (body.toInt() == 1), 2);
   else if (hdr == "#ru") setCheck(outVolt_, body.toFloat() / 100.0, 80);
-  else if (hdr == "#ri") setCheck(outCurr_, body.toFloat() / 100.0, 15);
   else if (hdr == "#rv") setCheck(limitVolt_, body.toFloat() / 100.0, 80);
   else if (hdr == "#ra") setCheck(limitCurr_, body.toFloat() / 100.0, 15);
-  else {
+  else if (hdr == "#ri") {
+    setCheck(outCurr_, body.toFloat() / 100.0, 15);
+    wh_ += outVolt_ * outCurr_ * (millis() - lastAmpUpdate_) / 1000.0 / 60 / 60;
+    currFilt_ = currFilt_ - 0.1 * (currFilt_ - outCurr_);
+    lastAmpUpdate_ = millis();
+  } else {
     log("PSU got unknown msg > '" + hdr + "' / '" + body + "'");
     return false;
   }
+  lastSuccess_ = millis();
   return true;
 }
 
