@@ -33,6 +33,8 @@ class PowerSupply {
 void log(const String &);
 void addLogger(Publishable*);
 
+String getResetReasons();
+
 float mapfloat(long x, long in_min, long in_max, long out_min, long out_max);
 
 extern const char* adafruitRootCert;

@@ -30,6 +30,7 @@ void Solar::setup() {
   Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
   addLogger(&pub_); //sets global context
   delay(100);
+  log(getResetReasons());
   uint64_t chipid = ESP.getEfuseMac();
   log(str("startup, ID %08llX %04X\n", chipid, (uint16_t)(chipid >> 32)));
   Serial2.begin(4800, SERIAL_8N1, -1, -1, false, 1000);
@@ -70,6 +71,7 @@ void Solar::setup() {
   pub_.add("clear",[=](String s){ pub_.clearPrefs(); return "cleared"; }).hide();
   pub_.add("debug",[=](String s){ psu_.debug_ = !(s == "off"); return String(psu_.debug_); }).hide();
   pub_.add("version",[=](String){ log("Version " GIT_VERSION); return GIT_VERSION; }).hide();
+  pub_.add("uptime",[=](String){ String ret = str("Uptime %lud", millis()); log(ret); return ret; }).hide();
 
   server_.on("/", HTTP_ANY, [=]() {
     log("got req " + server_.uri() + " -> " + server_.hostHeader());
