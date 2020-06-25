@@ -71,7 +71,7 @@ void Solar::setup() {
   pub_.add("clear",[=](String s){ pub_.clearPrefs(); return "cleared"; }).hide();
   pub_.add("debug",[=](String s){ psu_.debug_ = !(s == "off"); return String(psu_.debug_); }).hide();
   pub_.add("version",[=](String){ log("Version " GIT_VERSION); return GIT_VERSION; }).hide();
-  pub_.add("uptime",[=](String){ String ret = str("Uptime %lud", millis()); log(ret); return ret; }).hide();
+  pub_.add("uptime",[=](String){ String ret = "Uptime " + timeAgo(millis()/1000); log(ret); return ret; }).hide();
 
   server_.on("/", HTTP_ANY, [=]() {
     log("got req " + server_.uri() + " -> " + server_.hostHeader());
@@ -157,9 +157,9 @@ void Solar::doConnect() {
           if (i->pref_)
             db_.client.subscribe((db_.feed + "/prefs/" + i->key).c_str()); //subscribe to preference changes
         db_.client.subscribe((db_.feed + "/cmd").c_str()); //subscribe to cmd topic for any actions
-      } else Serial.println("PubSub connect ERROR! " + db_.client.state());
-    } else Serial.println("no MQTT user / pass / server / feed set up!");
-  } else Serial.printf("can't pub connect, wifi %d pub %d\n", WiFi.isConnected(), db_.client.connected());
+      } else pub_.logNote("[PubSub connect ERROR]" + db_.client.state());
+    } else pub_.logNote("[no MQTT user / pass / server / feed set up]");
+  } else pub_.logNote(str("[can't pub connect, wifi %d pub %d]", WiFi.isConnected(), db_.client.connected()));
 }
 
 String SPoint::toString() const {
@@ -169,7 +169,7 @@ String SPoint::toString() const {
 void Solar::applyAdjustment() {
   if (newDesiredCurr_ != psu_.limitCurr_) {
     if (psu_.setCurrent(newDesiredCurr_))
-      pub_.logNote(str("[adjusting %0.2fA (from %0.2fA)] ", newDesiredCurr_ - psu_.limitCurr_, psu_.limitCurr_));
+      pub_.logNote(str("[adjusting %0.2fA (from %0.2fA)]", newDesiredCurr_ - psu_.limitCurr_, psu_.limitCurr_));
     else log("error setting current");
     delay(50);
     psu_.readCurrent();
@@ -213,7 +213,7 @@ void Solar::doSweepStep() {
   int collapsedPoints = 0;
   for (int i = 0; i < sweepPoints_.size(); i++)
     if (sweepPoints_[i].collapsed) collapsedPoints++;
-  if (isCollapsed) pub_.logNote(str("COLLAPSED[%d] ", collapsedPoints));
+  if (isCollapsed) pub_.logNote(str("COLLAPSED[%d]", collapsedPoints));
 
   if (isCollapsed && collapsedPoints >= 2) { //great, sweep finished
     int maxIndex = 0;
@@ -279,8 +279,8 @@ void Solar::loop() {
       double dcurr = constrain(error * pgain_, -ramplimit_ * 2, ramplimit_); //limit ramping speed
       if (error > 0.3 || (-error > 0.2)) { //adjustment deadband, more sensitive when needing to ramp down
         newDesiredCurr_ = min(psu_.limitCurr_ + dcurr, currentCap_);
-        if (error < 0.6) { //ramp down, quick!
-          pub_.logNote("[QUICK] ");
+        if ((error < 0.6) && (state_ == States::mppt)) { //ramp down, quick!
+          pub_.logNote("[QUICK]");
           nextSolarAdjust_ = now;
         }
       }
@@ -356,7 +356,8 @@ void Solar::loop() {
     if (res) {
       wh_ += psu_.outVolt_ * psu_.outCurr_ * (now - lastPSUpdate_) / 1000.0 / 60 / 60;
       currFilt_ = currFilt_ - 0.1 * (currFilt_ - psu_.outCurr_);
-      pub_.setDirty({"outvolt", "outcurr", "outputEN", "wh", "outpower", "currFilt"});
+      pub_.setDirty({"outvolt", "outcurr", "outputEN", "outpower", "currFilt"});
+      if (millis() > ignoreSubsUntil_) pub_.setDirtyAddr(&wh_); //don't publish at first
       lastPSUSuccess_ = now;
     } else {
       log("psu update fail" + String(psu_.debug_? " serial debug output enabled" : ""));
@@ -365,9 +366,10 @@ void Solar::loop() {
     nextPSUpdate_ = now + 5000;
     lastPSUpdate_ = now;
   }
-  if (getCollapses() > 2) {
+
+  if (getCollapses() > 2)
     nextAutoSweep_ = lastAutoSweep_ + autoSweep_ / 3.0 * 1000;
-  }
+
   if (autoSweep_ > 0 && (now > nextAutoSweep_)) {
     if (state_ == States::capped) {
       log(str("Skipping auto-sweep. Already at currentCap (%0.1fA)", currentCap_));
@@ -385,12 +387,12 @@ void Solar::loop() {
 void Solar::publishTask() {
   doConnect();
   db_.client.loop();
-  ignoreSubsUntil_ = millis() + 3000;
+  ignoreSubsUntil_ = millis() + 10000;
   db_.client.setCallback([=](char*topicbuf, uint8_t*buf, unsigned int len){
     String topic(topicbuf), val = str(std::string((char*)buf, len));
     log("got sub value " + topic + " -> " + val);
     if (topic == (db_.feed + "/wh")) {
-      wh_ += val.toFloat();
+      wh_ = (millis() > ignoreSubsUntil_)? val.toFloat() : wh_ + val.toFloat();
       log("restored wh value to " + val);
       db_.client.unsubscribe((db_.feed + "/wh").c_str());
     } else if (millis() > ignoreSubsUntil_) { //don't load old values
@@ -414,10 +416,10 @@ void Solar::publishTask() {
           wins += db_.client.publish((db_.feed + "/" + (i->pref_? "prefs/":"") + i->key).c_str(), i->toString().c_str(), true)? 1 : 0;
           if (i->pref_) ignoreSubsUntil_ = now + 3000;
         }
-        pub_.logNote(str("[published %d] ", wins));
+        pub_.logNote(str("[pub-%d]", wins));
         pub_.clearDirty();
       } else {
-        pub_.logNote("[pub disconnected] ");
+        pub_.logNote("[pub disconnected]");
         doConnect();
       }
       heap_caps_check_integrity_all(true);

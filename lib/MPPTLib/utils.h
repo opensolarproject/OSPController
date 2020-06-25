@@ -34,6 +34,7 @@ void log(const String &);
 void addLogger(Publishable*);
 
 String getResetReasons();
+String timeAgo(int seconds);
 
 float mapfloat(long x, long in_min, long in_max, long out_min, long out_max);
 

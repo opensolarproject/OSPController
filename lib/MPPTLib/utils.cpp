@@ -30,6 +30,16 @@ Publishable* pub_; //static
 void log(const String &s) { pub_->log(s); }
 void addLogger(Publishable* p) { pub_ = p; }
 
+String timeAgo(int sec) {
+  int days = (sec / (3600 * 24));
+  String ret = str("%ds", sec % 60);
+  if (sec >= 60  ) ret = str("%dm ", (sec % 3600) / 60) + ret;
+  if (sec >= 3600) ret = str("%dh ", ((sec % (3600 * 24)) / 3600)) + ret;
+  if (days)        ret = str("%dd ", days % 365) + ret;
+  if (days >= 365) ret = str("%dy ", days / 365) + ret;
+  return ret;
+}
+
 
 PowerSupply::PowerSupply(Stream &port) : _port(&port), debug_(false) { }
 

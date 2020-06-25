@@ -37,7 +37,7 @@ template<> void Pub<String*>::load(Preferences&p) {
   (*value) = String(buf);
 }
 
-Publishable::Publishable() : lock_(xSemaphoreCreateCounting( 10, 0 )) {
+Publishable::Publishable() : lock_(xSemaphoreCreateMutex()) {
   add("save", [this](String s){
     return str("saved %d prefs", this->savePrefs());
   }).hide();
@@ -50,13 +50,13 @@ Publishable::Publishable() : lock_(xSemaphoreCreateCounting( 10, 0 )) {
 
 void Publishable::log(const String &s) {
   Serial.println(s);
-  if (xSemaphoreTake(lock_, (TickType_t) 10) == pdTRUE) {
+  if (xSemaphoreTake(lock_, (TickType_t) 100) == pdTRUE) {
     logPub_.push_back(s);
     xSemaphoreGive(lock_);
   }
 }
 bool Publishable::popLog(String *s) {
-  if (xSemaphoreTake(lock_, (TickType_t) 10) == pdTRUE) {
+  if (xSemaphoreTake(lock_, (TickType_t) 100) == pdTRUE) {
     bool got = logPub_.size() > 0;
     if (got) (*s) = logPub_.pop_front();
     xSemaphoreGive(lock_);
@@ -65,13 +65,13 @@ bool Publishable::popLog(String *s) {
   return false;
 }
 void Publishable::logNote(const String &s) {
-  if (xSemaphoreTake(lock_, (TickType_t) 10) == pdTRUE) {
-    logNote_ += s;
+  if (xSemaphoreTake(lock_, (TickType_t) 100) == pdTRUE) {
+    logNote_ +=  " " + s;
     xSemaphoreGive(lock_);
-  }
+  } else Serial.println("LOGNOTE couldn't get mutex! " + s);
 }
 String Publishable::popNotes() {
-  if (xSemaphoreTake(lock_, (TickType_t) 10) == pdTRUE) {
+  if (xSemaphoreTake(lock_, (TickType_t) 100) == pdTRUE) {
     String ret = logNote_;
     logNote_ = "";
     xSemaphoreGive(lock_);
