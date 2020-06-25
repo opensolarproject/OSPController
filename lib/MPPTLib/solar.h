@@ -24,6 +24,7 @@ public:
   Solar();
   void setup();
   void loop();
+  void sendOutgoingLogs();
   void publishTask();
   void doConnect();
   void applyAdjustment();
@@ -32,6 +33,7 @@ public:
   void doSweepStep();
   bool hasCollapsed() const;
   int getCollapses() const;
+  void doUpdate(String url);
 
   void backoff(String reason);
   void setState(const String state, String reason="");

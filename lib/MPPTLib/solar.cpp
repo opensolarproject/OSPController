@@ -3,6 +3,8 @@
 #include <WiFiClient.h>
 #include <ESPmDNS.h>
 #include <Update.h>
+#include <esp_task_wdt.h>
+#include <HTTPUpdate.h>
 
 WiFiClient espClient;
 
@@ -24,6 +26,7 @@ uint32_t lastPSUpdate_ = 0, lastPSUSuccess_ = 0;
 uint32_t nextAutoSweep_ = 0, lastAutoSweep_ = 0;
 double newDesiredCurr_ = 0;
 extern const String updateIndex;
+String doOTAUpdate_ = "";
 
 void Solar::setup() {
   Serial.begin(115200);
@@ -71,6 +74,7 @@ void Solar::setup() {
   pub_.add("clear",[=](String s){ pub_.clearPrefs(); return "cleared"; }).hide();
   pub_.add("debug",[=](String s){ psu_.debug_ = !(s == "off"); return String(psu_.debug_); }).hide();
   pub_.add("version",[=](String){ log("Version " GIT_VERSION); return GIT_VERSION; }).hide();
+  pub_.add("update",[=](String s){ doOTAUpdate_ = s; return "OK, will try "+s; }).hide();
   pub_.add("uptime",[=](String){ String ret = "Uptime " + timeAgo(millis()/1000); log(ret); return ret; }).hide();
 
   server_.on("/", HTTP_ANY, [=]() {
@@ -95,8 +99,9 @@ void Solar::setup() {
     HTTPUpload& upload = server_.upload();
     if (upload.status == UPLOAD_FILE_START){
       log(str("Update: %s\n", upload.filename.c_str()));
-      printPeriod_ = measperiod_ = 10000000;
-      nextPSUpdate_ = nextSolarAdjust_ = nextAutoSweep_ = millis() + 100000000;
+      doOTAUpdate_ = " "; //stops tasks
+      db_.client.disconnect(); //helps reliability
+      esp_task_wdt_init(120, true); //slows watchdog
       if (!Update.begin(UPDATE_SIZE_UNKNOWN))//start with max available size
         Update.printError(Serial);
     } else if (upload.status == UPLOAD_FILE_WRITE){
@@ -266,6 +271,9 @@ int Solar::getCollapses() const { return collapses_.size(); }
 
 void Solar::loop() {
   uint32_t now = millis();
+  if (doOTAUpdate_.length())
+    return delay(100);
+
   if ((now - lastV) >= ((state_ == States::sweeping)? measperiod_ * 4 : measperiod_)) {
     int analogval = analogRead(pinInvolt_);
     inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
@@ -382,6 +390,12 @@ void Solar::loop() {
   }
 }
 
+void Solar::sendOutgoingLogs() {
+  String s;
+  while (db_.client.connected() && pub_.popLog(&s))
+    db_.client.publish((db_.feed + "/log").c_str(), s.c_str(), false);
+}
+
 void Solar::publishTask() {
   doConnect();
   db_.client.loop();
@@ -407,6 +421,12 @@ void Solar::publishTask() {
   while (true) {
     uint32_t now = millis();
     if ((now - lastpub) >= (psu_.outEn_? db_.period : db_.period * 4)) { //slow-down when not enabled
+      while (doOTAUpdate_ == " ") //stops this task while an upload-OTA is running
+        delay(1000);
+      if (doOTAUpdate_.length()) {
+        doUpdate(doOTAUpdate_);
+        doOTAUpdate_ = "";
+      }
       if (db_.client.connected()) {
         int wins = 0;
         auto pubs = pub_.items(true);
@@ -420,12 +440,10 @@ void Solar::publishTask() {
         pub_.logNote("[pub disconnected]");
         doConnect();
       }
+      sendOutgoingLogs();
       heap_caps_check_integrity_all(true);
       lastpub = now;
     }
-    String s;
-    while (db_.client.connected() && pub_.popLog(&s))
-      db_.client.publish((db_.feed + "/log").c_str(), s.c_str(), false);
     db_.client.loop();
     pub_.poll(&Serial);
     server_.handleClient();
@@ -469,6 +487,22 @@ String DBConnection::getEndpoint() const {
   return (sep >= 0)? serv.substring(0, sep) : serv;
 }
 
+void Solar::doUpdate(String url) {
+  log("[OTA] running from " + url);
+  sendOutgoingLogs(); //send any outstanding log() messages
+  db_.client.disconnect(); //helps to disconnect everything
+  esp_task_wdt_init(120, true); //way longer watchdog timeout
+  t_httpUpdate_return ret = httpUpdate.update(espClient, url, GIT_VERSION);
+  if (ret == HTTP_UPDATE_FAILED) {
+    log(str("[OTA] Error (%d):", httpUpdate.getLastError()) + httpUpdate.getLastErrorString());
+  } else if (ret == HTTP_UPDATE_NO_UPDATES) {
+    log("[OTA] no updates");
+  } else if (ret == HTTP_UPDATE_OK) {
+    log("[OTA] SUCCESS!!! restarting");
+    delay(100);
+    ESP.restart();
+  }
+}
 
 //page styling
 const String style =
