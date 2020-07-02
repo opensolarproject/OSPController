@@ -23,6 +23,13 @@ String str(bool v) {
   return v ? " WIN" : " FAIL";
 }
 
+StringPair split(const String &str, const String &del) {
+  int at = str.indexOf(del);
+  if (at >= 0) return StringPair(str.substring(0, at), str.substring(at + del.length()));
+  return StringPair(str, "");
+}
+
+
 // float lifepo4_soc[] = {13.4, 13.3, 13.28, 13.};
 
 Publishable* pub_; //static

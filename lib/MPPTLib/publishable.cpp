@@ -17,6 +17,14 @@ struct Pub : PubItem {
   bool isAction() const override { return false; }
 };
 
+String prefGetString(Preferences&p, String key) {
+  char buf[128];
+  size_t l = p.getBytes(key.c_str(), buf, 128);
+  if (l == 0) return "";
+  buf[l] = 0; //null terminate
+  return String(buf);
+}
+
 template<> String Pub<double*>::toString() const { return String(*value, 3); }
 template<> String Pub<bool* >::toString() const { return (*value)? "true":"false"; }
 template<> String Pub<Action>::toString() const { return (value)(""); }
@@ -25,16 +33,13 @@ template<> String Pub<Action>::set(String v) { return (value)(v); }
 template<> void const* Pub<Action>::val() const { return &value; }
 
 template<> bool Pub<Action>::isAction()const { return true; }
-template<> void Pub<Action>::save(Preferences&p) { }
-template<> void Pub<Action>::load(Preferences&p) { }
+template<> void Pub<Action>::save(Preferences&p) { String v = (value)(""); p.putBytes(key.c_str(), v.c_str(), v.length()); }
+template<> void Pub<Action>::load(Preferences&p) { String v = prefGetString(p, key); if (v.length()) try { (value)(v); } catch(...) { } }
 template<> String Pub<String*>::set(String v) { return (*value) = v; }
 template<> String Pub<String*>::toString() const { return (*value); }
 template<> void Pub<String*>::save(Preferences&p) { p.putBytes(key.c_str(), value->c_str(), value->length()); }
 template<> void Pub<String*>::load(Preferences&p) {
-  char buf[128];
-  size_t l = p.getBytes(key.c_str(), buf, 128);
-  buf[l] = 0; //null terminate
-  (*value) = String(buf);
+  (*value) = prefGetString(p, key);
 }
 
 Publishable::Publishable() : lock_(xSemaphoreCreateMutex()) {
@@ -129,9 +134,13 @@ String Publishable::handleCmd(String cmd) {
 String Publishable::handleSet(String key, String val) {
   for (auto i : items_)
     if (i.first == key) {
-      String ret = i.second->set(val);
-      i.second->dirty_ = true;
-      return (ret.length())? ret : ("set " + key + " to " + val);
+      try {
+        String ret = i.second->set(val);
+        i.second->dirty_ = true;
+        return (ret.length())? ret : ("set " + key + " to " + val);
+      } catch (std::runtime_error e) {
+        return "error setting '" + key + "' to '" + val + "': " + String(e.what());
+      }
     }
   return "unknown key " + key;
 }
