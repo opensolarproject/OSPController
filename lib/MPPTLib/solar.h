@@ -5,6 +5,7 @@
 #include <WebServer.h>
 
 class PowerSupply;
+struct LowVoltageProtect;
 
 struct DBConnection {
   String serv, user, pass, feed;
@@ -23,7 +24,11 @@ struct SPoint {
 class Solar {
 public:
   Solar(String version);
+  ~Solar();
   void setup();
+  String setLVProtect(String);
+  String setPSU(String);
+
   void loop();
   void sendOutgoingLogs();
   void publishTask();
@@ -41,7 +46,7 @@ public:
 
   const String version_;
   String state_;
-  uint8_t pinInvolt_ = 32;
+  int pinInvolt_ = 32;
   float inVolt_ = 0;
   double setpoint_ = 0, pgain_ = 0.005, ramplimit_ = 2;
   double currentCap_ = 8.5;
@@ -53,8 +58,9 @@ public:
   String wifiap, wifipass;
   uint32_t ignoreSubsUntil_ = 0;
   int8_t backoffLevel_ = 0;
+  std::unique_ptr<LowVoltageProtect> lvProtect_;
 
-  PowerSupply* psu_;
+  std::unique_ptr<PowerSupply> psu_;
   WebServer server_;
   Publishable pub_;
   DBConnection db_;
@@ -70,4 +76,16 @@ struct States {
   STATE(full_cv);
   STATE(capped);
   STATE(collapsemode);
+};
+
+
+struct LowVoltageProtect {
+  uint8_t pin_ = 22;
+  float threshold_ = 12.0;
+  float threshRecovery_ = 13.0;
+  uint32_t nextCheck_ = 0;
+  String toString() const;
+  LowVoltageProtect(String configuration);
+  void init();
+  void trigger(bool trigger=true);
 };

@@ -8,12 +8,15 @@
 #include <esp_task_wdt.h>
 #include <HTTPUpdate.h>
 
+using namespace std::placeholders;
+
 WiFiClient espClient;
+
+Solar::~Solar() { }
 
 Solar::Solar(String version) :
         version_(version),
         state_(States::off),
-        psu_(NULL),
         server_(80),
         pub_() {
   db_.client.setClient(espClient);
@@ -53,13 +56,15 @@ void Solar::setup() {
   pub_.add("mqttUser", db_.user).hide().pref();
   pub_.add("mqttPass", db_.pass).hide().pref();
   pub_.add("mqttFeed", db_.feed).hide().pref();
-  pub_.add("psu", bind(&Solar::setPSU, this)).pref();
+  pub_.add("inPin",    pinInvolt_).pref();
+  pub_.add("lvProtect", std::bind(&Solar::setLVProtect, this, _1)).pref();
+  pub_.add("psu",       std::bind(&Solar::setPSU, this, _1)).pref();
   pub_.add("outputEN",[=](String s){ if (s.length()) psu_->enableOutput(s == "on"); return String(psu_->outEn_); });
   pub_.add("outvolt", [=](String s){ if (s.length()) psu_->setVoltage(s.toFloat()); return String(psu_->outVolt_); });
   pub_.add("outcurr", [=](String s){ if (s.length()) psu_->setCurrent(s.toFloat()); return String(psu_->outCurr_); });
   pub_.add("outpower",[=](String){ return String(psu_->outVolt_ * psu_->outCurr_); });
+  pub_.add("currFilt",[=](String){ return String(psu_->currFilt_); });
   pub_.add("state",      state_          );
-  pub_.add("currFilt",   psu_->currFilt_       );
   pub_.add("pgain",      pgain_          ).pref();
   pub_.add("ramplimit",  ramplimit_      ).pref();
   pub_.add("setpoint",   setpoint_       ).pref();
@@ -71,7 +76,7 @@ void Solar::setup() {
   pub_.add("autosweep",  autoSweep_      ).pref();
   pub_.add("currentcap", currentCap_     ).pref();
   pub_.add("involt",  inVolt_);
-  pub_.add("wh",      psu_->wh_    );
+  pub_.add("wh", [=](String s) { if (s.length()) psu_->wh_ = s.toFloat(); return String(psu_->wh_); });
   pub_.add("collapses", [=](String) { return String(getCollapses()); });
   pub_.add("sweep",[=](String){ startSweep(); return "starting sweep"; }).hide();
   pub_.add("connect",[=](String s){ doConnect(); return "connected"; }).hide();
@@ -129,10 +134,6 @@ void Solar::setup() {
   pub_.loadPrefs();
   // wifi & mqtt is connected by pubsubConnect below
 
-  // psu_ = new (Serial2);
-  // Serial2.begin(4800, SERIAL_8N1, -1, -1, false, 1000);
-  //TODO
-
   //fn, name, stack size, parameter, priority, handle
   xTaskCreate(runPubt, "publish", 10000, this, 1, NULL);
 
@@ -143,6 +144,32 @@ void Solar::setup() {
   nextAutoSweep_ = millis() + 10000;
   log("finished setup");
   log("OSPController Version " + version_);
+}
+
+String Solar::setLVProtect(String s) {
+  if (s.length()) {
+    lvProtect_.reset(new LowVoltageProtect(s)); //may throw!
+    lvProtect_->init();
+    return "new " + lvProtect_->toString() + " ok";
+  } else return lvProtect_? lvProtect_->toString() : "";
+}
+
+String Solar::setPSU(String s) {
+  log("setPSU " + s);
+  if (s.length() || !psu_) {
+    //TODO Parse softserial pins, bluetooth comms, and moar.
+    s.toUpperCase();
+    if (s.startsWith("DP")) {
+      psu_.reset(new DPS(&Serial2));
+      Serial2.begin(9600, SERIAL_8N1, -1, -1, false, 1000);
+    } else { //default
+      psu_.reset(new Drok(&Serial2));
+      Serial2.begin(4800, SERIAL_8N1, -1, -1, false, 1000);
+    }
+    psu_->begin();
+    return "created PSU=" + psu_->getType();
+  }
+  return psu_->getType();
 }
 
 void Solar::doConnect() {
@@ -290,8 +317,10 @@ void Solar::loop() {
     return delay(100);
 
   if (now > nextVmeas_) {
-    int analogval = analogRead(pinInvolt_);
-    inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
+    if (!psu_->getInputVolt(&inVolt_)) {
+      int analogval = analogRead(pinInvolt_);
+      inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
+    }
     pub_.setDirtyAddr(&inVolt_);
     if (state_ == States::sweeping) {
       doSweepStep();
@@ -389,6 +418,19 @@ void Solar::loop() {
       psu_->begin(); //try and reconnect
     }
     nextPSUpdate_ = now + min(getBackoff(5000), 100000); //100s
+  }
+
+  if (lvProtect_ && now > lvProtect_->nextCheck_) {
+    if (psu_->outVolt_ < lvProtect_->threshold_) {
+      log(str("LOW VOLTAGE PROTECT TRIGGERED (now at %0.2fV)", psu_->outVolt_));
+      sendOutgoingLogs(); //send logs, tripping this relay may power us down
+      delay(200);
+      lvProtect_->trigger();
+      lvProtect_->nextCheck_ = now + 20 * 1000;
+    } else if (psu_->outVolt_ > lvProtect_->threshRecovery_) {
+      lvProtect_->trigger(false);
+      lvProtect_->nextCheck_ = now + 10000;
+    }
   }
 
   if (getCollapses() > 2)
@@ -515,6 +557,35 @@ void Solar::doUpdate(String url) {
     delay(100);
     ESP.restart();
   }
+}
+
+
+String LowVoltageProtect::toString() const {
+  return str("%d:%0.2f:%0.2f", pin_, threshold_, threshRecovery_);
+}
+LowVoltageProtect::LowVoltageProtect(String config) {
+  StringPair sp1 = split(config, ":");
+  if (sp1.first.length()) pin_ = sp1.first.toInt();
+  log("DEBUG sp1 " + sp1.first + " /// " + sp1.second);
+  if (sp1.second.length()) {
+    StringPair sp2 = split(sp1.second, ":");
+    log("DEBUG sp2 " + sp2.first + " /// " + sp2.second);
+    threshold_ = sp2.first.toFloat();
+    if (sp2.second.length())
+      threshRecovery_ = sp2.second.toFloat();
+    else threshRecovery_ = threshold_ * 1.08;
+  }
+  log("created lvProtect="+toString());
+}
+
+void LowVoltageProtect::init() {
+  trigger(false);
+  log("low-voltage cutoff enabled: " + toString());
+}
+
+void LowVoltageProtect::trigger(bool trigger) {
+  pinMode(pin_, trigger? OUTPUT : INPUT_PULLUP);
+  digitalWrite(pin_, !trigger);
 }
 
 //page styling
