@@ -1,41 +1,6 @@
 #pragma once
-#include <Arduino.h>
 
 class Publishable;
-
-class PowerSupply {
-    Stream *_port;
-  public:
-    bool debug_;
-    float outVolt_ = 0, outCurr_ = 0;
-    float limitVolt_ = 0, limitCurr_ = 0;
-	float currFilt_ = 0.0, wh_ = 0;
-    bool outEn_ = false;
-	uint32_t lastSuccess_ = 0, lastAmpUpdate_ = 0;
-
-    PowerSupply(Stream &port);
-    bool begin();
-
-    String cmdReply(const String &cmd);
-    bool setVoltage(float);
-    bool setCurrent(float);
-    bool enableOutput(bool);
-
-    bool doUpdate(); //runs these next three:
-    bool readVoltage();
-    bool readCurrent();
-    bool getOutputEnabled();
-    void flush();
-
-	bool isCV() const;
-	bool isCC() const;
-	bool isCollapsed() const;
-	String toString() const;
-
-  private:
-    bool handleReply(const String &);
-    String fourCharStr(uint16_t input);
-};
 
 void log(const String &);
 void addLogger(Publishable*);

@@ -1,9 +1,10 @@
 #pragma once
 #include <Arduino.h>
-#include "utils.h"
 #include "publishable.h"
 #include <PubSubClient.h>
 #include <WebServer.h>
+
+class PowerSupply;
 
 struct DBConnection {
   String serv, user, pass, feed;
@@ -53,7 +54,7 @@ public:
   uint32_t ignoreSubsUntil_ = 0;
   int8_t backoffLevel_ = 0;
 
-  PowerSupply psu_;
+  PowerSupply* psu_;
   WebServer server_;
   Publishable pub_;
   DBConnection db_;
