@@ -32,6 +32,7 @@ uint32_t nextAutoSweep_ = 0, lastAutoSweep_ = 0;
 double newDesiredCurr_ = 0;
 extern const String updateIndex;
 String doOTAUpdate_ = "";
+uint32_t espSketchSize_ = 0;
 
 class Backoff : public std::runtime_error { public:
   Backoff(String s) : std::runtime_error(s.c_str()) { }
@@ -41,6 +42,7 @@ void Solar::setup() {
   Serial.begin(115200);
   Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
   addLogger(&pub_); //sets global context
+  espSketchSize_ = ESP.getSketchSize();
   delay(100);
   log(getResetReasons());
   uint64_t chipid = ESP.getEfuseMac();
@@ -116,7 +118,7 @@ void Solar::setup() {
       if (!Update.begin(UPDATE_SIZE_UNKNOWN))//start with max available size
         Update.printError(Serial);
     } else if (upload.status == UPLOAD_FILE_WRITE){
-      log(str("got write(size %d) at %d", upload.currentSize, Update.progress()));
+      log(str("OTA upload at %dKB ~%0.1%%%", Update.progress() / 1000, Update.progress() * 100 / espSketchSize_));
       if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
         Update.printError(Serial);
     } else if(upload.status == UPLOAD_FILE_END){
@@ -162,6 +164,8 @@ String Solar::setPSU(String s) {
     if (s.startsWith("DP")) {
       psu_.reset(new DPS(&Serial2));
       Serial2.begin(9600, SERIAL_8N1, -1, -1, false, 1000);
+      if (measperiod_ == 200) //default
+        measperiod_ = 500;
     } else { //default
       psu_.reset(new Drok(&Serial2));
       Serial2.begin(4800, SERIAL_8N1, -1, -1, false, 1000);
@@ -185,6 +189,7 @@ void Solar::doConnect() {
         MDNS.begin("mppt");
         MDNS.addService("http", "tcp", 80);
         server_.begin();
+        lastConnected_ = millis();
       }
     } else log("no wifiap or wifipass set!");
   }
@@ -194,13 +199,10 @@ void Solar::doConnect() {
       db_.client.setServer(db_.getEndpoint().c_str(), db_.getPort());
       if (db_.client.connect("MPPT", db_.user.c_str(), db_.pass.c_str())) {
         log("PubSub connect success! " + db_.client.state());
-        auto pubs = pub_.items(true);
-        for (auto i : pubs)
-          if (i->pref_)
-            db_.client.subscribe((db_.feed + "/prefs/" + i->key).c_str()); //subscribe to preference changes
         db_.client.subscribe((db_.feed + "/cmd").c_str()); //subscribe to cmd topic for any actions
+        lastConnected_ = millis();
       } else pub_.logNote("[PubSub connect ERROR]" + db_.client.state());
-    } else pub_.logNote("[no MQTT user / pass / server / feed set up]");
+    } else pub_.logNote("[no MQTT user/pass/serv/feed set up]");
   } else pub_.logNote(str("[can't pub connect, wifi %d pub %d]", WiFi.isConnected(), db_.client.connected()));
 }
 
@@ -317,7 +319,10 @@ void Solar::loop() {
     return delay(100);
 
   if (now > nextVmeas_) {
-    if (!psu_->getInputVolt(&inVolt_)) {
+    if (psu_->getInputVolt(&inVolt_)) {
+      psu_->doUpdate();
+      psu_->getInputVolt(&inVolt_);
+    } else {
       int analogval = analogRead(pinInvolt_);
       inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
     }
@@ -412,7 +417,7 @@ void Solar::loop() {
     bool res = psu_->doUpdate();
     if (res) {
       pub_.setDirty({"outvolt", "outcurr", "outputEN", "outpower", "currFilt"});
-      if (millis() > ignoreSubsUntil_) pub_.setDirty("wh"); //don't publish at first
+      if (psu_->wh_ > 2.0 || (millis() - lastConnected_) > 60000) pub_.setDirty("wh"); //don't publish at first
     } else {
       log("psu update fail" + String(psu_->debug_? " serial debug output enabled" : ""));
       psu_->begin(); //try and reconnect
@@ -459,21 +464,17 @@ void Solar::sendOutgoingLogs() {
 void Solar::publishTask() {
   doConnect();
   db_.client.loop();
-  ignoreSubsUntil_ = millis() + 10000;
   db_.client.setCallback([=](char*topicbuf, uint8_t*buf, unsigned int len){
     String topic(topicbuf), val = str(std::string((char*)buf, len));
     log("got sub value " + topic + " -> " + val);
     if (topic == (db_.feed + "/wh")) {
-      psu_->wh_ = (millis() > ignoreSubsUntil_)? val.toFloat() : psu_->wh_ + val.toFloat();
+      psu_->wh_ = (psu_->wh_ > 2.0)? val.toFloat() : psu_->wh_ + val.toFloat();
       log("restored wh value to " + val);
       db_.client.unsubscribe((db_.feed + "/wh").c_str());
-    } else if (millis() > ignoreSubsUntil_) { //don't load old values
-      if (topic == db_.feed + "/cmd") {
-        log("MQTT cmd " + topic + ":" + val + " -> " + pub_.handleCmd(val));
-      } else {
-        topic.replace(db_.feed + "/prefs/", ""); //replaces in-place, sadly
-        log("MQTT cmd " + topic + ":" + val + " -> " + pub_.handleSet(topic, val));
-      }
+    } else if (topic == db_.feed + "/cmd") {
+      log("MQTT cmd " + topic + ":" + val + " -> " + pub_.handleCmd(val));
+    } else {
+      log("MQTT unknown message " + topic + ":" + val);
     }
   });
   db_.client.subscribe((db_.feed + "/wh").c_str());
@@ -490,10 +491,8 @@ void Solar::publishTask() {
       if (db_.client.connected()) {
         int wins = 0;
         auto pubs = pub_.items(true);
-        for (auto i : pubs) {
+        for (auto i : pubs)
           wins += db_.client.publish((db_.feed + "/" + (i->pref_? "prefs/":"") + i->key).c_str(), i->toString().c_str(), true)? 1 : 0;
-          if (i->pref_) ignoreSubsUntil_ = now + 3000;
-        }
         pub_.logNote(str("[pub-%d]", wins));
         pub_.clearDirty();
       } else {

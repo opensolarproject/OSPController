@@ -1,6 +1,6 @@
 #pragma once
-#include <Arduino.h>
 #include "publishable.h"
+#include <WString.h>
 #include <PubSubClient.h>
 #include <WebServer.h>
 
@@ -56,7 +56,7 @@ public:
   float vadjust_ = 116.50;
   CircularArray<SPoint, 10> sweepPoints_; //size here is important, larger == more stable setpoint
   String wifiap, wifipass;
-  uint32_t ignoreSubsUntil_ = 0;
+  uint32_t lastConnected_ = 0;
   int8_t backoffLevel_ = 0;
   std::unique_ptr<LowVoltageProtect> lvProtect_;
 

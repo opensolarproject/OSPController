@@ -1,10 +1,12 @@
 #pragma once
-#include <Arduino.h>
+#include <WString.h>
+#include <FreeRTOS.h>
 #include <functional>
 #include <map>
 #include <list>
 #include "utils.h"
 
+class Stream;
 class PubSubClient;
 class WebServer;
 class Preferences;
@@ -21,6 +23,7 @@ struct PubItem {
   PubItem(String k, int p) : key(k), period(p), pref_(false), hidden_(false), dirty_(false) { }
   virtual ~PubItem() { }
   virtual String toString() const = 0;
+  virtual String jsonValue() const = 0;
   virtual String set(String v) = 0;
   virtual void const* val() const = 0;
   virtual void save(Preferences&) = 0;

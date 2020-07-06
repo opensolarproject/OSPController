@@ -1,7 +1,6 @@
 #include "publishable.h"
 #include "utils.h"
 #include <WiFi.h>
-#include <Arduino.h>
 #include <Preferences.h>
 
 template<typename T>
@@ -10,6 +9,7 @@ struct Pub : PubItem {
   Pub(String k, T v, int p) : PubItem(k,p), value(v) { }
   ~Pub() { }
   String toString() const override { return String(*value); }
+  String jsonValue() const override { return toString(); }
   String set(String v) override { *value = v.toFloat(); return toString(); }
   void const* val() const override { return value; }
   void save(Preferences&p) override { p.putBytes(key.c_str(), value, sizeof(*value)); }
@@ -28,6 +28,7 @@ String prefGetString(Preferences&p, String key) {
 template<> String Pub<double*>::toString() const { return String(*value, 3); }
 template<> String Pub<bool* >::toString() const { return (*value)? "true":"false"; }
 template<> String Pub<Action>::toString() const { return (value)(""); }
+template<> String Pub<Action>::jsonValue() const { return "\"" + toString() + "\""; }
 template<> String Pub<bool* >::set(String v) { (*value) = v=="on" || v=="true" || v=="1"; return toString(); }
 template<> String Pub<Action>::set(String v) { return (value)(v); }
 template<> void const* Pub<Action>::val() const { return &value; }
@@ -37,6 +38,7 @@ template<> void Pub<Action>::save(Preferences&p) { String v = (value)(""); p.put
 template<> void Pub<Action>::load(Preferences&p) { String v = prefGetString(p, key); if (v.length()) try { (value)(v); } catch(...) { } }
 template<> String Pub<String*>::set(String v) { return (*value) = v; }
 template<> String Pub<String*>::toString() const { return (*value); }
+template<> String Pub<String*>::jsonValue() const { return "\"" + toString() + "\""; }
 template<> void Pub<String*>::save(Preferences&p) { p.putBytes(key.c_str(), value->c_str(), value->length()); }
 template<> void Pub<String*>::load(Preferences&p) {
   (*value) = prefGetString(p, key);
@@ -197,9 +199,13 @@ void Publishable::printHelp() const {
 String Publishable::toJson() const {
   String ret = "{\n";
   for (const auto & i : items_)
-    if (!i.second->hidden_)
-      ret += "  \"" + i.first + "\":" + i.second->toString() + ",\n";
-  if (items_.size())
-    ret.remove(ret.length() - 2, 2); //remove trailing comma + LF
+    if (!i.second->hidden_ && !i.second->pref_)
+      ret += "  \"" + i.first + "\":" + i.second->jsonValue() + ",\n";
+  ret += "\"prefs\":{\n";
+  for (const auto & i : items_)
+    if (!i.second->hidden_ && i.second->pref_)
+      ret += "    \"" + i.first + "\":" + i.second->jsonValue() + ",\n";
+  ret.remove(ret.length() - 2, 2); //remove trailing comma + LF
+  ret += "  }\n";
   return ret + "\n}\n";
 }

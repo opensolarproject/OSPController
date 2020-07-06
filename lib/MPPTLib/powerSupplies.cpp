@@ -1,5 +1,5 @@
 #include "powerSupplies.h"
-#include <Arduino.h>
+#include <stdexcept>
 #include <ModbusMaster.h> // ModbusMaster
 #include "utils.h"
 
@@ -143,22 +143,29 @@ String DPS::getType() const { return "DPS"; }
 
 bool DPS::begin() {
   bus_->begin(1, *port_);
+  return doUpdate();
 }
 
 bool DPS::doUpdate() {
   //read a range of 16-bit registers starting at register 0 to 10
-  if (bus_->readHoldingRegisters(0, 10) == bus_->ku8MBSuccess) {
-    outVolt_    = ((float)bus_->getResponseBuffer(2) / 100 );
-    outCurr_    = ((float)bus_->getResponseBuffer(3) / 1000 );
-    inputVolts_ = ((float)bus_->getResponseBuffer(5) / 100 );
-    // float power = ((float)bus_->getResponseBuffer(4) / 100 );
-    limitVolt_  = ((float)bus_->getResponseBuffer(0) / 100 );
-    limitCurr_  = ((float)bus_->getResponseBuffer(1) / 1000 );
-    outEn_      = ((bool)bus_->getResponseBuffer(9) );
-    cc_      = ((bool)bus_->getResponseBuffer(8) );
-    doTotals();
-    lastSuccess_ = millis();
-    return true;
+  try {
+    if (bus_->readHoldingRegisters(0, 10) == bus_->ku8MBSuccess) {
+      outVolt_    = ((float)bus_->getResponseBuffer(2) / 100 );
+      outCurr_    = ((float)bus_->getResponseBuffer(3) / 1000 );
+      inputVolts_ = ((float)bus_->getResponseBuffer(5) / 100 );
+      // float power = ((float)bus_->getResponseBuffer(4) / 100 );
+      limitVolt_  = ((float)bus_->getResponseBuffer(0) / 100 );
+      limitCurr_  = ((float)bus_->getResponseBuffer(1) / 1000 );
+      outEn_      = ((bool)bus_->getResponseBuffer(9) );
+      cc_      = ((bool)bus_->getResponseBuffer(8) );
+      doTotals();
+      lastSuccess_ = millis();
+      return true;
+    }
+  } catch (std::runtime_error e) {
+    log("caught exception in DPS::update " + String(e.what()));
+  } catch (...) {
+    log("caught unknown exception in DPS::update");
   }
   return false;
 }
@@ -175,7 +182,14 @@ bool DPS::setCurrent(float c) {
 
 bool DPS::isCC() const { return cc_; }
 
-bool DPS::getInputVolt(float* v) const {
-  if (v) *v = inputVolts_;
-  return true;
+bool DPS::getInputVolt(float* v) {
+  try {
+    if (bus_->readHoldingRegisters(5, 1) == bus_->ku8MBSuccess) {
+      inputVolts_ = ((float)bus_->getResponseBuffer(5) / 100 );
+      lastSuccess_ = millis();
+      if (v) *v = inputVolts_;
+      return true;
+    }
+  } catch (...) { log("caught unknown exception in DPS::update"); }
+  return true; //still return true because we _can_ read input voltage
 }
