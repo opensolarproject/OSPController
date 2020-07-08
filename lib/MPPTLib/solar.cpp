@@ -514,6 +514,7 @@ void Solar::printStatus() {
   String s = state_;
   s.toUpperCase();
   s += str(" %0.1fVin -> %0.2fWh ", inVolt_, psu_->wh_) + psu_->toString();
+  if (lvProtect_ && lvProtect_->isTriggered()) s += " [LV PROTECTED]";
   s += pub_.popNotes();
   if (psu_->debug_) log(s);
   else Serial.println(s);
@@ -560,15 +561,15 @@ void Solar::doUpdate(String url) {
 
 
 String LowVoltageProtect::toString() const {
-  return str("%d:%0.2f:%0.2f", pin_, threshold_, threshRecovery_);
+  return String(pin_) + (invert_? "i" : "") + str(":%0.2f:%0.2f", threshold_, threshRecovery_);
 }
 LowVoltageProtect::LowVoltageProtect(String config) {
   StringPair sp1 = split(config, ":");
-  if (sp1.first.length()) pin_ = sp1.first.toInt();
-  log("DEBUG sp1 " + sp1.first + " /// " + sp1.second);
+  invert_ = sp1.first.endsWith("i");
+  if (invert_) sp1.first.remove(sp1.first.lastIndexOf("i"));
+  pin_ = sp1.first.length()? sp1.first.toInt() : 22;
   if (sp1.second.length()) {
     StringPair sp2 = split(sp1.second, ":");
-    log("DEBUG sp2 " + sp2.first + " /// " + sp2.second);
     threshold_ = sp2.first.toFloat();
     if (sp2.second.length())
       threshRecovery_ = sp2.second.toFloat();
@@ -579,12 +580,16 @@ LowVoltageProtect::LowVoltageProtect(String config) {
 
 void LowVoltageProtect::init() {
   trigger(false);
-  log("low-voltage cutoff enabled: " + toString());
+  log("low-voltage cutoff enabled: " + toString() + " (pin[i]:cutoff:recovery)");
 }
 
 void LowVoltageProtect::trigger(bool trigger) {
-  pinMode(pin_, trigger? OUTPUT : INPUT_PULLUP);
-  digitalWrite(pin_, !trigger);
+  pinMode(pin_, (trigger ^ invert_)?  OUTPUT : INPUT_PULLUP);
+  digitalWrite(pin_, !(trigger ^ invert_));
+}
+
+bool LowVoltageProtect::isTriggered() const {
+  return !(digitalRead(pin_) ^ invert_);
 }
 
 //page styling
