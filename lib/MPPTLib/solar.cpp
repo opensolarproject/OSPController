@@ -49,9 +49,6 @@ void Solar::setup() {
   log(str("startup, ID %08llX %04X\n", chipid, (uint16_t)(chipid >> 32)));
   analogSetCycles(32);
 
-  WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info){
-    Serial.println("wifi event");
-  });
   pub_.add("wifiap",     wifiap).hide().pref();
   pub_.add("wifipass", wifipass).hide().pref();
   pub_.add("mqttServ", db_.serv).hide().pref();
@@ -136,6 +133,11 @@ void Solar::setup() {
   pub_.loadPrefs();
   // wifi & mqtt is connected by pubsubConnect below
 
+  if (digitalPinToAnalogChannel(pinInvolt_) < 0)
+    log(str("ERROR, inPin %d isn't actually an ADC pin", pinInvolt_));
+  if (digitalPinToAnalogChannel(pinInvolt_) > 7)
+    log(str("ERROR, inPin %d is an ADC2 pin and WILL NOT WORK", pinInvolt_));
+
   //fn, name, stack size, parameter, priority, handle
   xTaskCreate(runPubt, "publish", 10000, this, 1, NULL);
 
@@ -151,7 +153,8 @@ void Solar::setup() {
 String Solar::setLVProtect(String s) {
   if (s.length()) {
     lvProtect_.reset(new LowVoltageProtect(s)); //may throw!
-    lvProtect_->init();
+    log("low-voltage cutoff enabled: " + lvProtect_->toString() + " (pin[i]:cutoff:recovery)");
+    lvProtect_->nextCheck_ = millis() + 5000; //don't check right away
     return "new " + lvProtect_->toString() + " ok";
   } else return lvProtect_? lvProtect_->toString() : "";
 }
@@ -163,7 +166,7 @@ String Solar::setPSU(String s) {
     s.toUpperCase();
     if (s.startsWith("DP")) {
       psu_.reset(new DPS(&Serial2));
-      Serial2.begin(9600, SERIAL_8N1, -1, -1, false, 1000);
+      Serial2.begin(19200, SERIAL_8N1, -1, -1, false, 1000);
       if (measperiod_ == 200) //default
         measperiod_ = 500;
     } else { //default
@@ -426,13 +429,14 @@ void Solar::loop() {
   }
 
   if (lvProtect_ && now > lvProtect_->nextCheck_) {
-    if (psu_->outVolt_ < lvProtect_->threshold_) {
+    if (!lvProtect_->isTriggered() && psu_->outVolt_ < lvProtect_->threshold_) {
       log(str("LOW VOLTAGE PROTECT TRIGGERED (now at %0.2fV)", psu_->outVolt_));
       sendOutgoingLogs(); //send logs, tripping this relay may power us down
       delay(200);
-      lvProtect_->trigger();
-      lvProtect_->nextCheck_ = now + 20 * 1000;
-    } else if (psu_->outVolt_ > lvProtect_->threshRecovery_) {
+      lvProtect_->trigger(true);
+      lvProtect_->nextCheck_ = now + 5 * 1000;
+    } else if (lvProtect_->isTriggered() && psu_->outVolt_ > lvProtect_->threshRecovery_) {
+      log("low voltage recovery, re-enabling.");
       lvProtect_->trigger(false);
       lvProtect_->nextCheck_ = now + 10000;
     }
@@ -568,6 +572,8 @@ LowVoltageProtect::LowVoltageProtect(String config) {
   invert_ = sp1.first.endsWith("i");
   if (invert_) sp1.first.remove(sp1.first.lastIndexOf("i"));
   pin_ = sp1.first.length()? sp1.first.toInt() : 22;
+  if (digitalPinToAnalogChannel(pin_) > 7)
+    throw std::runtime_error("sorry, lv-protect pin can't use an ADC2 pin");
   if (sp1.second.length()) {
     StringPair sp2 = split(sp1.second, ":");
     threshold_ = sp2.first.toFloat();
@@ -575,16 +581,11 @@ LowVoltageProtect::LowVoltageProtect(String config) {
       threshRecovery_ = sp2.second.toFloat();
     else threshRecovery_ = threshold_ * 1.08;
   }
-  log("created lvProtect="+toString());
-}
-
-void LowVoltageProtect::init() {
-  trigger(false);
-  log("low-voltage cutoff enabled: " + toString() + " (pin[i]:cutoff:recovery)");
+  log("created lvProtect=" + toString());
 }
 
 void LowVoltageProtect::trigger(bool trigger) {
-  pinMode(pin_, (trigger ^ invert_)?  OUTPUT : INPUT_PULLUP);
+  pinMode(pin_, OUTPUT);
   digitalWrite(pin_, !(trigger ^ invert_));
 }
 

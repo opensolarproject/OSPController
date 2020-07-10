@@ -87,7 +87,6 @@ struct LowVoltageProtect {
   uint32_t nextCheck_ = 0;
   String toString() const;
   LowVoltageProtect(String configuration);
-  void init();
   void trigger(bool trigger=true);
   bool isTriggered() const;
 };
