@@ -45,6 +45,7 @@ public:
   void setState(const String state, String reason="");
 
   const String version_;
+  String id_;
   String state_;
   int pinInvolt_ = 32;
   float inVolt_ = 0;
@@ -87,6 +88,7 @@ struct LowVoltageProtect {
   uint32_t nextCheck_ = 0;
   String toString() const;
   LowVoltageProtect(String configuration);
+  ~LowVoltageProtect();
   void trigger(bool trigger=true);
   bool isTriggered() const;
 };

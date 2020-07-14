@@ -45,8 +45,12 @@ void Solar::setup() {
   espSketchSize_ = ESP.getSketchSize();
   delay(100);
   log(getResetReasons());
-  uint64_t chipid = ESP.getEfuseMac();
-  log(str("startup, ID %08llX %04X\n", chipid, (uint16_t)(chipid >> 32)));
+  uint64_t fusemac = ESP.getEfuseMac();
+  uint8_t* chipid = (uint8_t*) & fusemac;
+  String mac = str("%02x:%02x:%02x:%02x:%02x:%02x", chipid[0], chipid[1], chipid[2], chipid[3], chipid[4], chipid[5]);
+  log("startup, MAC " + id_);
+  id_ = "mppt-" + str("%02x", chipid[5]);
+  log("startup, ID " + id_);
   analogSetCycles(32);
 
   pub_.add("wifiap",     wifiap).hide().pref();
@@ -115,7 +119,7 @@ void Solar::setup() {
       if (!Update.begin(UPDATE_SIZE_UNKNOWN))//start with max available size
         Update.printError(Serial);
     } else if (upload.status == UPLOAD_FILE_WRITE){
-      log(str("OTA upload at %dKB ~%0.1%%%", Update.progress() / 1000, Update.progress() * 100 / espSketchSize_));
+      log(str("OTA upload at %dKB ~%0.1f%%", Update.progress() / 1000, Update.progress() * 100.0 / (float)espSketchSize_));
       if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
         Update.printError(Serial);
     } else if(upload.status == UPLOAD_FILE_END){
@@ -183,13 +187,11 @@ void Solar::doConnect() {
   if (! WiFi.isConnected()) {
     if (wifiap.length() && wifipass.length()) {
       WiFi.begin(wifiap.c_str(), wifipass.c_str());
-      uint64_t chipid = ESP.getEfuseMac();
-      String hostname = str("mpptESP-%02X", chipid & 0xff);
-      WiFi.setHostname(hostname.c_str());
+      WiFi.setHostname(id_.c_str());
       if (WiFi.waitForConnectResult() == WL_CONNECTED) {
-        log("Wifi connected! hostname: " + hostname);
+        log("Wifi connected! hostname: " + id_);
         log("IP: " + WiFi.localIP().toString());
-        MDNS.begin("mppt");
+        MDNS.begin(id_.c_str());
         MDNS.addService("http", "tcp", 80);
         server_.begin();
         lastConnected_ = millis();
@@ -198,9 +200,9 @@ void Solar::doConnect() {
   }
   if (WiFi.isConnected() && !db_.client.connected()) {
     if (db_.serv.length() && db_.feed.length()) {
-      log("Connecting MQTT to " + db_.user + "@" + db_.serv);
+      log("Connecting MQTT to " + db_.user + "@" + db_.serv  + " as " + id_);
       db_.client.setServer(db_.getEndpoint().c_str(), db_.getPort());
-      if (db_.client.connect("MPPT", db_.user.c_str(), db_.pass.c_str())) {
+      if (db_.client.connect(id_.c_str(), db_.user.c_str(), db_.pass.c_str())) {
         log("PubSub connect success! " + db_.client.state());
         db_.client.subscribe((db_.feed + "/cmd").c_str()); //subscribe to cmd topic for any actions
         lastConnected_ = millis();
@@ -245,17 +247,6 @@ void Solar::doSweepStep() {
   if (!psu_->outEn_)
     return setState(States::mppt);
 
-  newDesiredCurr_ = psu_->limitCurr_ + (inVolt_ * 0.001); //speed porportional to input voltage
-  if (newDesiredCurr_ >= currentCap_) {
-    setpoint_ = inVolt_ - (pgain_ * 4);
-    newDesiredCurr_ = currentCap_;
-    setState(States::mppt);
-    log(str("SWEEP DONE, currentcap of %0.1fA reached (setpoint=%0.3f)", currentCap_, setpoint_));
-    return applyAdjustment();
-  } else if (psu_->isCV()) {
-    setState(States::full_cv);
-    return log("SWEEP DONE, constant-voltage state reached");
-  }
   psu_->doUpdate();
 
   bool isCollapsed = hasCollapsed();
@@ -298,6 +289,19 @@ void Solar::doSweepStep() {
     //the output should be re-enabled below
   }
 
+  if (newDesiredCurr_ >= currentCap_) {
+    setpoint_ = inVolt_ - (pgain_ * 4);
+    setpoint_ = sweepPoints_.back().input;
+    newDesiredCurr_ = currentCap_;
+    setState(States::mppt);
+    log(str("SWEEP DONE, currentcap of %0.1fA reached (setpoint=%0.3f)", currentCap_, setpoint_));
+    return applyAdjustment();
+  } else if (psu_->isCV()) {
+    setState(States::full_cv);
+    return log("SWEEP DONE, constant-voltage state reached");
+  }
+
+  newDesiredCurr_ = min(psu_->limitCurr_ + (inVolt_ * 0.001), currentCap_ + 0.001); //speed porportional to input voltage
   applyAdjustment();
 }
 
@@ -567,6 +571,7 @@ void Solar::doUpdate(String url) {
 String LowVoltageProtect::toString() const {
   return String(pin_) + (invert_? "i" : "") + str(":%0.2f:%0.2f", threshold_, threshRecovery_);
 }
+LowVoltageProtect::~LowVoltageProtect() { log("~LVProtect " + toString()); }
 LowVoltageProtect::LowVoltageProtect(String config) {
   StringPair sp1 = split(config, ":");
   invert_ = sp1.first.endsWith("i");
