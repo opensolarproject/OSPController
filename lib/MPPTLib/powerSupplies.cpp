@@ -3,6 +3,23 @@
 #include <ModbusMaster.h> // ModbusMaster
 #include "utils.h"
 
+PowerSupply* PowerSupply::make(const String &type) {
+  PowerSupply* ret = NULL;
+  String typeUp = type;
+  typeUp.toUpperCase();
+  if (typeUp.startsWith("DP")) {
+    ret = new DPS(&Serial2);
+    Serial2.begin(19200, SERIAL_8N1, -1, -1, false, 1000);
+  } else if (typeUp.startsWith("DROK")) {
+    ret = new Drok(&Serial2);
+    Serial2.begin(4800, SERIAL_8N1, -1, -1, false, 1000);
+  } else { //default
+    ret = NULL;
+  }
+  if (ret) ret->type_ = type;
+  return ret;
+}
+
 
 // ----------------------- //
 // ----- PowerSupply ----- //
@@ -31,15 +48,13 @@ void PowerSupply::doTotals() {
 // -------- Drok -------- //
 // ---------------------- //
 
-Drok::Drok(Stream* port) : PowerSupply(), port_(port) { }
+Drok::Drok(Stream* port) : PowerSupply() { port_ = port; }
 Drok::~Drok() { }
 
 bool Drok::begin() {
   flush();
   return doUpdate();
 }
-
-String Drok::getType() const { return "Drok"; }
 
 bool Drok::doUpdate() {
   bool res = readVoltage() &&
@@ -136,10 +151,8 @@ bool Drok::setCurrent(float v) {
 // --------- DPS --------- //
 // ----------------------- //
 
-DPS::DPS(Stream* port) : PowerSupply(), port_(port), bus_(new ModbusMaster) { }
+DPS::DPS(Stream* port) : PowerSupply(), bus_(new ModbusMaster) { port_ = port; }
 DPS::~DPS() { }
-
-String DPS::getType() const { return "DPS"; }
 
 bool DPS::begin() {
   bus_->begin(1, *port_);

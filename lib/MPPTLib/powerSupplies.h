@@ -1,11 +1,13 @@
 #pragma once
 #include <cstdint>
+#include <WString.h>
 
-class String;
 class Stream;
 
 class PowerSupply {
   public:
+    String type_;
+    Stream *port_ = NULL;
     bool debug_ = false;
     float outVolt_ = 0, outCurr_ = 0;
     float limitVolt_ = 0, limitCurr_ = 0;
@@ -13,6 +15,7 @@ class PowerSupply {
     bool outEn_ = false;
     uint32_t lastSuccess_ = 0, lastAmpUpdate_ = 0;
 
+    static PowerSupply* make(const String &type);
     PowerSupply();
     virtual ~PowerSupply();
     virtual bool begin() = 0;
@@ -28,18 +31,17 @@ class PowerSupply {
     virtual bool isCollapsed() const;
     virtual bool getInputVolt(float* v) { return false; }
     virtual String toString() const;
-    virtual String getType() const = 0;
+    String getType() const { return type_; }
+    virtual bool isDrok() const { return true; }
   protected:
     void doTotals();
 };
 
 class Drok : public PowerSupply {
-    Stream *port_;
   public:
-    Drok(Stream* port);
+    Drok(Stream*);
     ~Drok();
     bool begin() override;
-    virtual String getType() const;
 
     String cmdReply(const String &cmd);
     bool setVoltage(float) override;
@@ -60,16 +62,14 @@ class Drok : public PowerSupply {
 class ModbusMaster;
 
 class DPS : public PowerSupply {
-    Stream *port_;
     ModbusMaster* bus_;
   public:
     float inputVolts_ = 0;
     bool cc_ = false;
 
-    DPS(Stream* port);
+    DPS(Stream*);
     ~DPS();
     bool begin() override;
-    virtual String getType() const;
 
     bool setVoltage(float) override;
     bool setCurrent(float) override;
@@ -79,4 +79,5 @@ class DPS : public PowerSupply {
 
     bool isCC() const override;
     bool getInputVolt(float* v) override;
+    bool isDrok() const override { return false; }
 };
