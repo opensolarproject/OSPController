@@ -209,7 +209,7 @@ void Solar::doConnect() {
 }
 
 String SPoint::toString() const {
-  return str("[%0.3fVin %0.3fVout %0.3fAout", input, v, i) + (collapsed? " COLLAPSED]" : " ]");
+  return str("[%0.2fVin %0.2fVout %0.2fAout", input, v, i) + (collapsed? " CLPS]" : " ]");
 }
 
 void Solar::applyAdjustment() {
@@ -235,6 +235,7 @@ void Solar::startSweep() {
     log(str("First coming out of collapse-mode to clim of %0.2fA", psu_->limitCurr_));
   }
   setState(States::sweeping);
+  psu_->setCurrent(psu_->currFilt_* 0.90); //back off a little to start
   if (psu_ && !psu_->outEn_)
       psu_->enableOutput(true);
   lastAutoSweep_ = millis();
@@ -247,7 +248,7 @@ void Solar::doSweepStep() {
 
   psu_->doUpdate();
 
-  bool isCollapsed = hasCollapsed();
+  bool isCollapsed = psu_->isCollapsed();
   sweepPoints_.push_back({v: psu_->outVolt_, i: psu_->outCurr_, input: inVolt_, collapsed: isCollapsed});
   int collapsedPoints = 0;
   for (int i = 0; i < sweepPoints_.size(); i++)
@@ -263,22 +264,25 @@ void Solar::doSweepStep() {
       if (!sweepPoints_[i].collapsed && sweepPoints_[i].p() > sweepPoints_[maxIndex].p())
         maxIndex = i; //find max
     }
-    log("SWEEP DONE. max point = " + sweepPoints_[maxIndex].toString() + str(", (setpoint was %0.3f)", setpoint_));
+    String tolog = "SWEEP DONE. max = " + sweepPoints_[maxIndex].toString();
     if (sweepPoints_[maxIndex].p() < collapsePoint.p()) {
-      log(str("Max point is actually running collapsed. Will sweep again in %0.1f mins", ((float)autoSweep_) / 3.0 / 60.0));
+      log(tolog + str(" will run collapsed! (next sweep in %0.1fm)", ((float)autoSweep_) / 3.0 / 60.0));
       setState(States::collapsemode);
       psu_->setCurrent(currentCap_ > 0? currentCap_ : 10);
       nextAutoSweep_ = millis() + autoSweep_ * 1000 / 3; //reschedule soon
       setpoint_ = collapsePoint.input;
     } else {
       maxIndex = max(0, maxIndex - 2);
-      log("Using safe max point of " + sweepPoints_[maxIndex].toString());
+      log(tolog + str(" new setpoint = %0.3f (was %0.3f)", sweepPoints_[maxIndex].input, setpoint_));
       setState(States::mppt);
       psu_->enableOutput(false);
       psu_->setCurrent(sweepPoints_[maxIndex].i * 0.90);
-      delay(300);
+      uint32_t start = millis();
+      while ((millis() - start) < 5000 && measureInvolt() < (psu_->outVolt_ * 1.11)) //v-match method
+        delay(10);
+      log(str("sweep restore took %0.1fs, now at %0.1fA (goal = %0.1fA)",
+        (millis() - start) / 1000.0, psu_->limitCurr_, sweepPoints_[maxIndex].i));
       psu_->enableOutput(true);
-      delay(300);
       setpoint_ = sweepPoints_[maxIndex].input;
     }
     pub_.setDirtyAddr(&setpoint_);
@@ -318,20 +322,25 @@ bool Solar::hasCollapsed() const {
 
 int Solar::getCollapses() const { return collapses_.size(); }
 
+float Solar::measureInvolt() {
+  if (psu_ && psu_->getInputVolt(&inVolt_)) {
+    //excellent, we could read the input voltage! nothing else required
+  } else {
+    int analogval = analogRead(pinInvolt_);
+    inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
+  }
+  pub_.setDirtyAddr(&inVolt_);
+  return inVolt_;
+}
+
 void Solar::loop() {
   uint32_t now = millis();
   if (doOTAUpdate_.length())
     return delay(100);
 
   if (now > nextVmeas_) {
-    if (psu_ && psu_->getInputVolt(&inVolt_)) {
-      psu_->doUpdate();
-      psu_->getInputVolt(&inVolt_);
-    } else {
-      int analogval = analogRead(pinInvolt_);
-      inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
-    }
-    pub_.setDirtyAddr(&inVolt_);
+    measureInvolt();
+
     if (state_ == States::sweeping) {
       doSweepStep();
     } else if (setpoint_ > 0 && psu_ && psu_->outEn_) { //corrections enabled

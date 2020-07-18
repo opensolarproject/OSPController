@@ -30,6 +30,7 @@ public:
   String setPSU(String);
 
   void loop();
+  float measureInvolt();
   void sendOutgoingLogs();
   void publishTask();
   void doConnect();
