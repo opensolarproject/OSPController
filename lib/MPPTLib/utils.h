@@ -18,6 +18,7 @@ String str(bool v);
 
 typedef std::pair<String,String> StringPair;
 StringPair split(const String &str, const String &del);
+bool suffixed(String *str, const String &suff);
 
 template<typename T, uint16_t Size>
 class CircularArray {

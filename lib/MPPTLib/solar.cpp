@@ -175,7 +175,7 @@ String Solar::setPSU(String s) {
       measperiod_ = 500; //slow down, DSP5005 meas does full update()
     ckPSUs();
     psu_->begin();
-    return "created PSU=" + psu_->getType();
+    return "created psu " + psu_->getType();
   }
   return psu_->getType();
 }
@@ -305,6 +305,8 @@ void Solar::doSweepStep() {
 
 bool Solar::hasCollapsed() const {
   if (!psu_ || !psu_->outEn_) return false;
+  if (!psu_->isDrok() && psu_->isCollapsed()) //DP* psu is darn accurate
+    return true;
   bool simpleClps = (inVolt_ < (psu_->outVolt_ * 1.11)); //simple voltage match method
   float collapsePct = (inVolt_ - psu_->outVolt_) / psu_->outVolt_;
   if (simpleClps && psu_->isCollapsed())
@@ -617,8 +619,7 @@ String LowVoltageProtect::toString() const {
 LowVoltageProtect::~LowVoltageProtect() { log("~LVProtect " + toString()); }
 LowVoltageProtect::LowVoltageProtect(String config) {
   StringPair sp1 = split(config, ":");
-  invert_ = sp1.first.endsWith("i");
-  if (invert_) sp1.first.remove(sp1.first.lastIndexOf("i"));
+  invert_ = suffixed(& sp1.first, "i");
   pin_ = sp1.first.length()? sp1.first.toInt() : 22;
   if (digitalPinToAnalogChannel(pin_) > 7)
     throw std::runtime_error("sorry, lv-protect pin can't use an ADC2 pin");

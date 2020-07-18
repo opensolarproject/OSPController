@@ -1,18 +1,40 @@
 #include "powerSupplies.h"
 #include <stdexcept>
+#include <SoftwareSerial.h>
 #include <ModbusMaster.h> // ModbusMaster
 #include "utils.h"
 
-PowerSupply* PowerSupply::make(const String &type) {
+//form: rxpin,txpin[sw]:baud
+Stream* makeStream(String s, int baud) {
+  auto sp1 = split(s, ":");
+  if (sp1.second.length()) //specify baud rate
+    baud = sp1.second.toInt();
+  int rx = -1, tx = -1;
+  if (sp1.first.length()) { //specify pins
+    bool useSw = suffixed(& sp1.first, "sw");
+    auto pins = split(sp1.first, ",");
+    rx = pins.first.length()? pins.first.toInt() : -1;
+    tx = pins.second.length()? pins.second.toInt() : -1;
+    if (useSw) {
+      auto ret = new SoftwareSerial;
+      ret->begin(baud, SWSERIAL_8N1, rx, tx, false);
+      return ret;
+    }
+  }
+  Serial2.begin(baud, SERIAL_8N1, rx, tx, false, 1000);
+  return &Serial2;
+}
+
+PowerSupply* PowerSupply::make(String type) {
+  type.toLowerCase();
+  auto sp1 = split(type, ":");
   PowerSupply* ret = NULL;
   String typeUp = type;
   typeUp.toUpperCase();
   if (typeUp.startsWith("DP")) {
-    ret = new DPS(&Serial2, typeUp.equals("DPS5020"));
-    Serial2.begin(19200, SERIAL_8N1, -1, -1, false, 1000);
+    ret = new DPS(makeStream(sp1.second, 19200), typeUp.equals("DPS5020"));
   } else if (typeUp.startsWith("DROK")) {
-    ret = new Drok(&Serial2);
-    Serial2.begin(4800, SERIAL_8N1, -1, -1, false, 1000);
+    ret = new Drok(makeStream(sp1.second, 4800));
   } else { //default
     ret = NULL;
   }
@@ -26,7 +48,19 @@ PowerSupply* PowerSupply::make(const String &type) {
 // ----------------------- //
 
 PowerSupply::PowerSupply() { }
-PowerSupply::~PowerSupply() { }
+PowerSupply::~PowerSupply() {
+  String ret;
+  if (auto hw = dynamic_cast<HardwareSerial*>(port_)) {
+    hw->end(); ret += "ended HW ";
+  } else if (auto sw = dynamic_cast<SoftwareSerial*>(port_)) {
+    sw->end(); ret += "ended SW ";
+  }
+  if ((port_ != &Serial) && (port_ != &Serial1) && (port_ != &Serial2)) {
+    delete(port_);
+    ret += "deleted ";
+  }
+  log("~PowerSupply " + ret);
+}
 
 String PowerSupply::toString() const {
   return str("PSU-out[%0.2fV %0.2fA]-lim[%0.2fV %0.2fA]", outVolt_, outCurr_, limitVolt_, limitCurr_)

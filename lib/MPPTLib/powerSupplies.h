@@ -15,7 +15,7 @@ class PowerSupply {
     bool outEn_ = false;
     uint32_t lastSuccess_ = 0, lastAmpUpdate_ = 0;
 
-    static PowerSupply* make(const String &type);
+    static PowerSupply* make(String type);
     PowerSupply();
     virtual ~PowerSupply();
     virtual bool begin() = 0;

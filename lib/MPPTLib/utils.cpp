@@ -29,6 +29,12 @@ StringPair split(const String &str, const String &del) {
   return StringPair(str, "");
 }
 
+bool suffixed(String *str, const String &suff) {
+  if (!str) return false;
+  bool res = str->endsWith(suff);
+  if (res) str->remove(str->lastIndexOf(suff));
+  return res;
+}
 
 // float lifepo4_soc[] = {13.4, 13.3, 13.28, 13.};
 
