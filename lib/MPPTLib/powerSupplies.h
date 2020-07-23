@@ -29,7 +29,7 @@ class PowerSupply {
     virtual bool isCV() const;
     virtual bool isCC() const;
     virtual bool isCollapsed() const;
-    virtual bool getInputVolt(float* v) { return false; }
+    virtual bool getInputVolt(float* v) const { return false; }
     virtual String toString() const;
     String getType() const { return type_; }
     virtual bool isDrok() const { return true; }
@@ -78,6 +78,6 @@ class DPS : public PowerSupply {
     bool doUpdate() override; //runs these next three:
 
     bool isCC() const override;
-    bool getInputVolt(float* v) override;
+    bool getInputVolt(float* v) const override;
     bool isDrok() const override { return false; }
 };

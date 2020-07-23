@@ -195,14 +195,7 @@ bool DPS::setCurrent(float c) {
 
 bool DPS::isCC() const { return cc_; }
 
-bool DPS::getInputVolt(float* v) {
-  try {
-    if (bus_->readHoldingRegisters(5, 1) == bus_->ku8MBSuccess) {
-      inputVolts_ = ((float)bus_->getResponseBuffer(5) / 100 );
-      lastSuccess_ = millis();
-      if (v) *v = inputVolts_;
-      return true;
-    }
-  } catch (...) { log("caught unknown exception in DPS::update"); }
-  return true; //still return true because we _can_ read input voltage
+bool DPS::getInputVolt(float* v) const {
+  if (v) *v = inputVolts_;
+  return true;
 }

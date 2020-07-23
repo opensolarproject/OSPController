@@ -30,16 +30,18 @@ public:
   String setPSU(String);
 
   void loop();
+  bool updatePSU();
   float measureInvolt();
   void sendOutgoingLogs();
   void publishTask();
   void doConnect();
-  void applyAdjustment();
+  void applyAdjustment(float current);
   void printStatus();
   void startSweep();
   void doSweepStep();
   bool hasCollapsed() const;
   int getCollapses() const;
+  void restoreFromCollapse(float restoreCurrent);
   void doUpdate(String url);
 
   int getBackoff(int period) const;
@@ -56,6 +58,7 @@ public:
   int measperiod_ = 200, printPeriod_ = 1000, adjustPeriod_ = 2000;
   int autoSweep_ = 10 * 60; //every 10m
   float vadjust_ = 116.50;
+  float offThreshold_ = 1000.0; //starts high to force update
   CircularArray<SPoint, 10> sweepPoints_; //size here is important, larger == more stable setpoint
   String wifiap, wifipass;
   uint32_t lastConnected_ = 0;

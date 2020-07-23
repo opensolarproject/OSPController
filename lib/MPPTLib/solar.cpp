@@ -30,7 +30,6 @@ void runPubt(void*c) { ((Solar*)c)->publishTask(); }
 uint32_t nextVmeas_ = 0, nextPub_ = 20000, nextPrint_ = 0;
 uint32_t nextPSUpdate_ = 0, nextSolarAdjust_ = 1000;
 uint32_t nextAutoSweep_ = 0, lastAutoSweep_ = 0;
-double newDesiredCurr_ = 0;
 extern const String updateIndex;
 String doOTAUpdate_ = "";
 uint32_t espSketchSize_ = 0;
@@ -79,6 +78,7 @@ void Solar::setup() {
   pub_.add("measperiod", measperiod_     ).pref();
   pub_.add("autosweep",  autoSweep_      ).pref();
   pub_.add("currentcap", currentCap_     ).pref();
+  pub_.add("offthreshold",offThreshold_  ).pref();
   pub_.add("involt",  inVolt_);
   pub_.add("wh", [=](String s) { ckPSUs(); if (s.length()) psu_->wh_ = s.toFloat(); return String(psu_->wh_); });
   pub_.add("collapses", [=](String) { return String(getCollapses()); });
@@ -149,10 +149,10 @@ void Solar::setup() {
   if (!psu_) log("no PSU set");
   else if (!psu_->begin()) log("PSU begin failed");
   else if (psu_) {
-    newDesiredCurr_ = psu_->currFilt_ = psu_->limitCurr_ = psu_->outCurr_;
-    log(str("startup current is %0.3fAdes/%0.3fAfilt/%0.3fAout", newDesiredCurr_, psu_->currFilt_, psu_->outCurr_));
+    psu_->currFilt_ = psu_->limitCurr_ = psu_->outCurr_;
+    log(str("startup current is %0.3fAfilt/%0.3fAout", psu_->currFilt_, psu_->outCurr_));
   }
-  nextAutoSweep_ = millis() + 10000;
+  if (autoSweep_ > 0) nextAutoSweep_ = millis() + 10000;
   log("finished setup");
   log("OSPController Version " + version_);
 }
@@ -167,8 +167,8 @@ String Solar::setLVProtect(String s) {
 }
 
 String Solar::setPSU(String s) {
-  log("setPSU " + s);
   if (s.length() || !psu_) {
+    log("setPSU " + s);
     //TODO Parse softserial pins, bluetooth comms, and moar.
     psu_.reset(PowerSupply::make(s));
     if (psu_ && ! psu_->isDrok() && (measperiod_ == 200)) //default
@@ -212,10 +212,10 @@ String SPoint::toString() const {
   return str("[%0.2fVin %0.2fVout %0.2fAout", input, v, i) + (collapsed? " CLPS]" : " ]");
 }
 
-void Solar::applyAdjustment() {
-  if (psu_ && newDesiredCurr_ != psu_->limitCurr_) {
-    if (psu_->setCurrent(newDesiredCurr_))
-      pub_.logNote(str("[adjusting %0.3fA (from %0.3fA)]", newDesiredCurr_ - psu_->limitCurr_, psu_->limitCurr_));
+void Solar::applyAdjustment(float current) {
+  if (psu_ && current != psu_->limitCurr_) {
+    if (psu_->setCurrent(current))
+      pub_.logNote(str("[adjusting %0.3fA (from %0.3fA)]", current - psu_->limitCurr_, psu_->limitCurr_));
     else log("error setting current");
     delay(50);
     psu_->readCurrent();
@@ -227,15 +227,13 @@ void Solar::applyAdjustment() {
 void Solar::startSweep() {
   if (state_ == States::error)
     return log("can't sweep, system is in error state");
-  log(str("SWEEP START c=%0.3f, (setpoint was %0.3f)", newDesiredCurr_, setpoint_));
-  if (psu_ && state_ == States::collapsemode) {
-    psu_->enableOutput(false);
-    psu_->setCurrent(psu_->currFilt_* 0.75);
-    delay(200);
+  psu_->setCurrent(psu_->currFilt_* 0.90); //back off a little to start
+  log(str("SWEEP START c=%0.3f, (setpoint was %0.3f)", psu_->limitCurr_, setpoint_));
+  if ((psu_ && state_ == States::collapsemode) || hasCollapsed()) {
     log(str("First coming out of collapse-mode to clim of %0.2fA", psu_->limitCurr_));
+    restoreFromCollapse(psu_->currFilt_* 0.75);
   }
   setState(States::sweeping);
-  psu_->setCurrent(psu_->currFilt_* 0.90); //back off a little to start
   if (psu_ && !psu_->outEn_)
       psu_->enableOutput(true);
   lastAutoSweep_ = millis();
@@ -246,16 +244,23 @@ void Solar::doSweepStep() {
   if (!psu_->outEn_)
     return setState(States::mppt);
 
-  psu_->doUpdate();
+  updatePSU();
 
   bool isCollapsed = psu_->isCollapsed();
   sweepPoints_.push_back({v: psu_->outVolt_, i: psu_->outCurr_, input: inVolt_, collapsed: isCollapsed});
-  int collapsedPoints = 0;
-  for (int i = 0; i < sweepPoints_.size(); i++)
+  int collapsedPoints = 0, nonCollapsedPoints = 0;
+  for (int i = 0; i < sweepPoints_.size(); i++) {
     if (sweepPoints_[i].collapsed) collapsedPoints++;
+    else nonCollapsedPoints++;
+  }
   if (isCollapsed) pub_.logNote(str("COLLAPSED[%d]", collapsedPoints));
 
   if (isCollapsed && collapsedPoints >= 2) { //great, sweep finished
+    if (!nonCollapsedPoints) {
+      log("SWEEP DONE but zero un-collapsed points. aborting.");
+      restoreFromCollapse(psu_->currFilt_* 0.5);
+      return setState(States::mppt);
+    }
     int maxIndex = 0;
     SPoint collapsePoint = sweepPoints_.back();
 
@@ -275,14 +280,7 @@ void Solar::doSweepStep() {
       maxIndex = max(0, maxIndex - 2);
       log(tolog + str(" new setpoint = %0.3f (was %0.3f)", sweepPoints_[maxIndex].input, setpoint_));
       setState(States::mppt);
-      psu_->enableOutput(false);
-      psu_->setCurrent(sweepPoints_[maxIndex].i * 0.90);
-      uint32_t start = millis();
-      while ((millis() - start) < 5000 && measureInvolt() < (psu_->outVolt_ * 1.11)) //v-match method
-        delay(10);
-      log(str("sweep restore took %0.1fs, now at %0.1fA (goal = %0.1fA)",
-        (millis() - start) / 1000.0, psu_->limitCurr_, sweepPoints_[maxIndex].i));
-      psu_->enableOutput(true);
+      restoreFromCollapse(sweepPoints_[maxIndex].i * 0.90);
       setpoint_ = sweepPoints_[maxIndex].input;
     }
     pub_.setDirtyAddr(&setpoint_);
@@ -291,20 +289,18 @@ void Solar::doSweepStep() {
     //the output should be re-enabled below
   }
 
-  if (newDesiredCurr_ >= currentCap_) {
+  if (psu_->limitCurr_ >= currentCap_) {
     setpoint_ = inVolt_ - (pgain_ * 4);
     setpoint_ = sweepPoints_.back().input;
-    newDesiredCurr_ = currentCap_;
     setState(States::mppt);
     log(str("SWEEP DONE, currentcap of %0.1fA reached (setpoint=%0.3f)", currentCap_, setpoint_));
-    return applyAdjustment();
+    return applyAdjustment(currentCap_);
   } else if (psu_->isCV()) {
     setState(States::full_cv);
     return log("SWEEP DONE, constant-voltage state reached");
   }
 
-  newDesiredCurr_ = min(psu_->limitCurr_ + (inVolt_ * 0.001), currentCap_ + 0.001); //speed porportional to input voltage
-  applyAdjustment();
+  applyAdjustment(min(psu_->limitCurr_ + (inVolt_ * 0.001), currentCap_ + 0.001)); //speed porportional to input voltage
 }
 
 bool Solar::hasCollapsed() const {
@@ -322,9 +318,23 @@ bool Solar::hasCollapsed() const {
 
 int Solar::getCollapses() const { return collapses_.size(); }
 
+bool Solar::updatePSU() {
+  if (psu_ && psu_->doUpdate()) {
+    pub_.setDirty({"outvolt", "outcurr", "outputEN", "outpower", "currFilt"});
+    if (psu_->wh_ > 2.0 || (millis() - lastConnected_) > 60000)
+      pub_.setDirty("wh"); //don't publish for a while after reboot
+    return true;
+  }
+  return false;
+}
+
 float Solar::measureInvolt() {
   if (psu_ && psu_->getInputVolt(&inVolt_)) {
     //excellent, we could read the input voltage! nothing else required
+    if ((millis() - psu_->lastSuccess_) > 600) {
+      updatePSU(); //seems to take ~400ms for a DP
+      psu_->getInputVolt(&inVolt_);
+    }
   } else {
     int analogval = analogRead(pinInvolt_);
     inVolt_ = analogval * 3.3 * (vadjust_ / 3.3) / 4096.0;
@@ -333,12 +343,29 @@ float Solar::measureInvolt() {
   return inVolt_;
 }
 
+void Solar::restoreFromCollapse(float restoreCurrent) {
+  psu_->enableOutput(false);
+  psu_->setCurrent(restoreCurrent);
+  uint32_t start = millis();
+  while ((millis() - start) < 8000 && measureInvolt() < offThreshold_)
+    delay(25);
+  float in = measureInvolt();
+  if (offThreshold_ > 2 * in) { //startup condition
+    offThreshold_ = 0.992 * in;
+    log(str("restore threshold now set to %0.2fV", offThreshold_));
+    pub_.setDirtyAddr(&offThreshold_);
+  }
+  log(str("restore took %0.1fs to reach %0.1fV [goal %0.1f], setting %0.1fA", (millis() - start) / 1000.0, in, offThreshold_, restoreCurrent));
+  psu_->enableOutput(true);
+}
+
 void Solar::loop() {
   uint32_t now = millis();
+  float newDesiredCurr = psu_->limitCurr_;
   if (doOTAUpdate_.length())
     return delay(100);
 
-  if (now > nextVmeas_) {
+  if (now > nextVmeas_ || now > nextSolarAdjust_) {
     measureInvolt();
 
     if (state_ == States::sweeping) {
@@ -347,7 +374,7 @@ void Solar::loop() {
       double error = inVolt_ - setpoint_;
       double dcurr = constrain(error * pgain_, -ramplimit_ * 2, ramplimit_); //limit ramping speed
       if (error > 0.3 || (-error > 0.2)) { //adjustment deadband, more sensitive when needing to ramp down
-        newDesiredCurr_ = min(psu_->limitCurr_ + dcurr, currentCap_);
+        newDesiredCurr = min(psu_->limitCurr_ + dcurr, currentCap_);
         if ((error < 0.6) && (state_ == States::mppt)) { //ramp down, quick!
           pub_.logNote("[QUICK]");
           nextSolarAdjust_ = now;
@@ -372,6 +399,7 @@ void Solar::loop() {
       }
       if ((inVolt_ > 1) && (lastPSUsecs > 5 * 60)) {
         log("VERY UNRESPONSIVE PSU, RESTARTING");
+        nextPub_ = now;
         delay(1000);
         ESP.restart();
       }
@@ -389,12 +417,10 @@ void Solar::loop() {
         }
       } else if (setpoint_ > 0 && (state_ != States::sweeping)) {
         if (hasCollapsed() && state_ != States::collapsemode) {
-          newDesiredCurr_ = psu_->currFilt_ * 0.95; //restore at 90% of previous point
           collapses_.push_back(now);
           pub_.setDirty("collapses");
-          log(str("collapsed! %0.2fV set recovery to %0.1fA ", inVolt_, newDesiredCurr_) + psu_->toString());
-          psu_->enableOutput(false);
-          psu_->setCurrent(newDesiredCurr_);
+          log(str("collapsed! %0.2fV ", inVolt_) + psu_->toString());
+          restoreFromCollapse(psu_->currFilt_ * 0.95); //restore at 90% of previous point
         } else if (psu_ && !psu_->outEn_) { //power supply is off. let's check about turning it on
           if (inVolt_ < psu_->outVolt_ || psu_->outVolt_ < 0.1) {
             throw Backoff("not starting up, input voltage too low (is it dark?)");
@@ -408,7 +434,7 @@ void Solar::loop() {
           }
         }
         if (psu_ && psu_->outEn_ && state_ != States::collapsemode) {
-          applyAdjustment();
+          applyAdjustment(newDesiredCurr);
         }
       }
       backoffLevel_ = max(backoffLevel_ - 1, 0); //successes means less backoff
@@ -430,11 +456,7 @@ void Solar::loop() {
   }
 
   if (psu_ && now > nextPSUpdate_) {
-    bool res = psu_->doUpdate();
-    if (res) {
-      pub_.setDirty({"outvolt", "outcurr", "outputEN", "outpower", "currFilt"});
-      if (psu_->wh_ > 2.0 || (millis() - lastConnected_) > 60000) pub_.setDirty("wh"); //don't publish at first
-    } else {
+    if (!updatePSU()) {
       log("psu update fail" + String(psu_->debug_? " serial debug output enabled" : ""));
       psu_->begin(); //try and reconnect
     }
