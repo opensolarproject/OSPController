@@ -63,7 +63,7 @@ bool Drok::doUpdate() {
   if (res && !limitVolt_) {
     handleReply(cmdReply("arc")); //read current limit
     handleReply(cmdReply("arv")); //read voltage limit
-    log(str("finished PSU begin, got %0.3fV %0.3fA limits\n", limitVolt_, limitCurr_));
+    log(getType() + str(" finished begin, got %0.3fV %0.3fA limits\n", limitVolt_, limitCurr_));
   }
   return res;
 }
@@ -86,7 +86,7 @@ bool Drok::handleReply(const String &msg) {
     setCheck(outCurr_, body.toFloat() / 100.0, 15);
     doTotals();
   } else {
-    log("PSU got unknown msg > '" + hdr + "' / '" + body + "'");
+    log(getType() + " got unknown msg > '" + hdr + "' / '" + body + "'");
     return false;
   }
   lastSuccess_ = millis();
@@ -99,7 +99,8 @@ void Drok::flush() {
 
 String Drok::cmdReply(const String &cmd) {
   port_->print(cmd + "\r\n");
-  if (debug_) log("PSU > " + cmd + "CRLF");
+  String tolog;
+  if (debug_) tolog += " > '" + cmd + "CRLF'";
   String reply;
   uint32_t start = millis();
   char c;
@@ -107,13 +108,13 @@ String Drok::cmdReply(const String &cmd) {
     if (port_->readBytes(&c, 1))
       reply.concat(c);
   if (debug_ && reply.length()) {
-    String debug = reply;
-    debug.replace("\r", "CR");
-    debug.replace("\n", "NL");
-    log("PSU < " + debug);
+    tolog += " < '" + reply + "'";
+    tolog.replace("\r", "CR");
+    tolog.replace("\n", "NL");
+    log(getType() + tolog);
   }
   if (!reply.length() && debug_ && port_->available())
-    log("PSU nothing read.. stuff available!? " + String(port_->available()));
+    log(getType() + " nothing read.. stuff available!? " + String(port_->available()));
   reply.trim();
   return reply;
 }
@@ -174,11 +175,11 @@ bool DPS::doUpdate() {
       doTotals();
       lastSuccess_ = millis();
       return true;
-    }
+    } else log(getType() + " error fetching registers");
   } catch (std::runtime_error e) {
-    log("caught exception in DPS::update " + String(e.what()));
+    log(getType() + " caught exception in DPS::update " + String(e.what()));
   } catch (...) {
-    log("caught unknown exception in DPS::update");
+    log(getType() + " caught unknown exception in DPS::update");
   }
   return false;
 }

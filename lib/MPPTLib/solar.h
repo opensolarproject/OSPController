@@ -30,6 +30,10 @@ public:
   String setPSU(String);
 
   void loop();
+  float doMeasure();
+  void doUpdateState();
+  void doAdjust(float desired);
+
   bool updatePSU();
   float measureInvolt();
   void sendOutgoingLogs();
@@ -42,7 +46,7 @@ public:
   bool hasCollapsed() const;
   int getCollapses() const;
   void restoreFromCollapse(float restoreCurrent);
-  void doUpdate(String url);
+  void doOTA(String url);
 
   int getBackoff(int period) const;
   void setState(const String state, String reason="");
