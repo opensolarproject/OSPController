@@ -280,7 +280,7 @@ void Solar::doSweepStep() {
       maxIndex = max(0, maxIndex - 2);
       log(tolog + str(" new setpoint = %0.3f (was %0.3f)", sweepPoints_[maxIndex].input, setpoint_));
       setState(States::mppt);
-      restoreFromCollapse(sweepPoints_[maxIndex].i * 0.90);
+      restoreFromCollapse(sweepPoints_[maxIndex].i * (0.98 - 0.04 * min(getCollapses(), 8))); //more collapses, more backoff
       setpoint_ = sweepPoints_[maxIndex].input;
     }
     pub_.setDirtyAddr(&setpoint_);
