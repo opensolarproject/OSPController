@@ -56,7 +56,7 @@ public:
   String state_;
   int pinInvolt_ = 32;
   float inVolt_ = 0;
-  double setpoint_ = 0, pgain_ = 0.005, ramplimit_ = 2;
+  double setpoint_ = 0, pgain_ = 0.005, ramplimit_ = 12;
   double currentCap_ = 8.5;
   CircularArray<uint32_t, 32> collapses_;
   int measperiod_ = 200, printPeriod_ = 1000, adjustPeriod_ = 2000;

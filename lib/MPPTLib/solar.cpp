@@ -246,7 +246,7 @@ void Solar::doSweepStep() {
 
   updatePSU();
 
-  bool isCollapsed = psu_->isCollapsed();
+  bool isCollapsed = hasCollapsed();
   sweepPoints_.push_back({v: psu_->outVolt_, i: psu_->outCurr_, input: inVolt_, collapsed: isCollapsed});
   int collapsedPoints = 0, nonCollapsedPoints = 0;
   for (int i = 0; i < sweepPoints_.size(); i++) {

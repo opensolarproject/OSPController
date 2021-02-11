@@ -18,6 +18,9 @@ def getVersion():
 if len(sys.argv) > 1 and sys.argv[1] == "version":
   print("-DGIT_VERSION=\\\"%s\\\"" % getVersion())
 
+elif len(sys.argv) > 1 and sys.argv[1] == "simple":
+  print(getVersion())
+
 elif len(sys.argv) > 1 and sys.argv[0].endswith("scons"): #pre/post extra_script
   Import("env")
   # print(Back.GREEN + Fore.BLACK + "sys argv" + Style.RESET_ALL + str(sys.argv))
