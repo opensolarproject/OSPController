@@ -163,7 +163,7 @@ bool DPS::begin() {
 bool DPS::doUpdate() {
   //read a range of 16-bit registers starting at register 0 to 10
   try {
-    if (bus_->readHoldingRegisters(0, 10) == bus_->ku8MBSuccess) {
+    if (bus_->readHoldingRegisters(0x0000, 10) == bus_->ku8MBSuccess) {
       outVolt_    = ((float)bus_->getResponseBuffer(2) / 100 );
       outCurr_    = ((float)bus_->getResponseBuffer(3) / 1000 );
       inputVolts_ = ((float)bus_->getResponseBuffer(5) / 100 );
@@ -184,14 +184,14 @@ bool DPS::doUpdate() {
   return false;
 }
 bool DPS::enableOutput(bool en) {
-  return bus_->writeSingleRegister(9, en) == bus_->ku8MBSuccess;
+  return bus_->writeSingleRegister(0x0009, en) == bus_->ku8MBSuccess;
 }
 
 bool DPS::setVoltage(float v) {
-  return bus_->writeSingleRegister(0, ((limitVolt_ = v)) * 100) == bus_->ku8MBSuccess;
+  return bus_->writeSingleRegister(0x0000, ((limitVolt_ = v)) * 100) == bus_->ku8MBSuccess;
 }
 bool DPS::setCurrent(float c) {
-  return bus_->writeSingleRegister(1, ((limitCurr_ = c)) * 1000) == bus_->ku8MBSuccess;
+  return bus_->writeSingleRegister(0x0001, ((limitCurr_ = c)) * 1000) == bus_->ku8MBSuccess;
 }
 
 bool DPS::isCC() const { return cc_; }
