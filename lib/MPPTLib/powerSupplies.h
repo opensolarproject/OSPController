@@ -68,7 +68,7 @@ class DPS : public PowerSupply {
     bool cc_ = false;
     bool dps5020_ = false;
 
-    DPS(Stream*, bool dps5020);
+    DPS(Stream*);
     ~DPS();
     bool begin() override;
 

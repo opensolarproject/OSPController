@@ -32,7 +32,7 @@ PowerSupply* PowerSupply::make(String type) {
   String typeUp = type;
   typeUp.toUpperCase();
   if (typeUp.startsWith("DP")) {
-    ret = new DPS(makeStream(sp1.second, 19200), typeUp.equals("DPS5020"));
+    ret = new DPS(makeStream(sp1.second, 19200));
   } else if (typeUp.startsWith("DROK")) {
     ret = new Drok(makeStream(sp1.second, 4800));
   } else { //default
@@ -186,7 +186,7 @@ bool Drok::setCurrent(float v) {
 // --------- DPS --------- //
 // ----------------------- //
 
-DPS::DPS(Stream* port, bool dps5020) : PowerSupply(), bus_(new ModbusMaster), dps5020_(dps5020) { port_ = port; }
+DPS::DPS(Stream* port) : PowerSupply(), bus_(new ModbusMaster), dps5020_(false) { port_ = port; }
 DPS::~DPS() { }
 
 bool DPS::begin() {
@@ -195,7 +195,8 @@ bool DPS::begin() {
     if (bus_->readHoldingRegisters(0x000B, 2) == bus_->ku8MBSuccess) {
       uint16_t model = bus_->getResponseBuffer(0);
       uint16_t version = bus_->getResponseBuffer(1);
-      log(getType() + str(" begin model/version %X %X", model, version));
+      dps5020_ = (model == 5020);
+      log(getType() + str(" begin model/version %d %d %d", model, version, dps5020_));
       return true;
     }
   }
@@ -212,7 +213,7 @@ bool DPS::doUpdate() {
       outCurr_    = ((float)bus_->getResponseBuffer(3) / (dps5020_? 100 : 1000) );
       // float power = ((float)bus_->getResponseBuffer(4) / 100 );
       inputVolts_ = ((float)bus_->getResponseBuffer(5) / 100 );
-      cc_      = ((bool)bus_->getResponseBuffer(8) );
+      cc_         = ((bool)bus_->getResponseBuffer(8) );
       outEn_      = ((bool)bus_->getResponseBuffer(9) );
       doTotals();
       lastSuccess_ = millis();
