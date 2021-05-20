@@ -348,19 +348,18 @@ float Solar::measureInvolt() {
 }
 
 void Solar::restoreFromCollapse(float restoreCurrent) {
-  psu_->enableOutput(false);
-  psu_->setCurrent(restoreCurrent);
+  psu_->setCurrent(0.01); //some PSU's don't disable without crashing (cough5020cough)
   uint32_t start = millis();
   while ((millis() - start) < 8000 && measureInvolt() < offThreshold_)
     delay(25);
   float in = measureInvolt();
-  if (offThreshold_ > 2 * in) { //startup condition
+  if (offThreshold_ >= 1000) { //startup condition
     offThreshold_ = 0.992 * in;
     log(str("restore threshold now set to %0.2fV", offThreshold_));
     pub_.setDirtyAddr(&offThreshold_);
   }
   log(str("restore took %0.1fs to reach %0.1fV [goal %0.1f], setting %0.1fA", (millis() - start) / 1000.0, in, offThreshold_, restoreCurrent));
-  psu_->enableOutput(true);
+  psu_->setCurrent(restoreCurrent);
 }
 
 float Solar::doMeasure() {

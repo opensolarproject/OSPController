@@ -237,7 +237,7 @@ bool DPS::setCurrent(float c) {
   return bus_->writeSingleRegister(0x0001, ((limitCurr_ = c)) * (dps5020_? 100 : 1000)) == bus_->ku8MBSuccess;
 }
 
-bool DPS::isCC() const { return cc_; }
+bool DPS::isCC() const { return dps5020_? PowerSupply::isCC() : cc_; } //5020 cc doesn't report correctly
 
 bool DPS::getInputVolt(float* v) const {
   if (v) *v = inputVolts_;
