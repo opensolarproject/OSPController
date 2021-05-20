@@ -51,7 +51,7 @@ void Solar::setup() {
   log("startup, MAC " + id_);
   id_ = "mppt-" + str("%02x", chipid[5]);
   log("startup, ID " + id_);
-  analogSetCycles(32);
+  //TODO analogSetCycles(32); <- removed in recent version. test if needs replacing
 
   pub_.add("wifiap",     wifiap).hide().pref();
   pub_.add("wifipass", wifipass).hide().pref();

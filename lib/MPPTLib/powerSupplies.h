@@ -66,8 +66,9 @@ class DPS : public PowerSupply {
   public:
     float inputVolts_ = 0;
     bool cc_ = false;
+    bool dps5020_ = false;
 
-    DPS(Stream*);
+    DPS(Stream*, bool dps5020);
     ~DPS();
     bool begin() override;
 

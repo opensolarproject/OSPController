@@ -8,7 +8,7 @@ PowerSupply* PowerSupply::make(const String &type) {
   String typeUp = type;
   typeUp.toUpperCase();
   if (typeUp.startsWith("DP")) {
-    ret = new DPS(&Serial2);
+    ret = new DPS(&Serial2, typeUp.equals("DPS5020"));
     Serial2.begin(19200, SERIAL_8N1, -1, -1, false, 1000);
   } else if (typeUp.startsWith("DROK")) {
     ret = new Drok(&Serial2);
@@ -152,26 +152,34 @@ bool Drok::setCurrent(float v) {
 // --------- DPS --------- //
 // ----------------------- //
 
-DPS::DPS(Stream* port) : PowerSupply(), bus_(new ModbusMaster) { port_ = port; }
+DPS::DPS(Stream* port, bool dps5020) : PowerSupply(), bus_(new ModbusMaster), dps5020_(dps5020) { port_ = port; }
 DPS::~DPS() { }
 
 bool DPS::begin() {
   bus_->begin(1, *port_);
-  return doUpdate();
+  if (doUpdate()) {
+    if (bus_->readHoldingRegisters(0x000B, 2) == bus_->ku8MBSuccess) {
+      uint16_t model = bus_->getResponseBuffer(0);
+      uint16_t version = bus_->getResponseBuffer(1);
+      log(getType() + str(" begin model/version %X %X", model, version));
+      return true;
+    }
+  }
+  return false;
 }
 
 bool DPS::doUpdate() {
   //read a range of 16-bit registers starting at register 0 to 10
   try {
     if (bus_->readHoldingRegisters(0x0000, 10) == bus_->ku8MBSuccess) {
-      outVolt_    = ((float)bus_->getResponseBuffer(2) / 100 );
-      outCurr_    = ((float)bus_->getResponseBuffer(3) / 1000 );
-      inputVolts_ = ((float)bus_->getResponseBuffer(5) / 100 );
-      // float power = ((float)bus_->getResponseBuffer(4) / 100 );
       limitVolt_  = ((float)bus_->getResponseBuffer(0) / 100 );
-      limitCurr_  = ((float)bus_->getResponseBuffer(1) / 1000 );
-      outEn_      = ((bool)bus_->getResponseBuffer(9) );
+      limitCurr_  = ((float)bus_->getResponseBuffer(1) / (dps5020_? 100 : 1000) );
+      outVolt_    = ((float)bus_->getResponseBuffer(2) / 100 );
+      outCurr_    = ((float)bus_->getResponseBuffer(3) / (dps5020_? 100 : 1000) );
+      // float power = ((float)bus_->getResponseBuffer(4) / 100 );
+      inputVolts_ = ((float)bus_->getResponseBuffer(5) / 100 );
       cc_      = ((bool)bus_->getResponseBuffer(8) );
+      outEn_      = ((bool)bus_->getResponseBuffer(9) );
       doTotals();
       lastSuccess_ = millis();
       return true;
@@ -191,7 +199,7 @@ bool DPS::setVoltage(float v) {
   return bus_->writeSingleRegister(0x0000, ((limitVolt_ = v)) * 100) == bus_->ku8MBSuccess;
 }
 bool DPS::setCurrent(float c) {
-  return bus_->writeSingleRegister(0x0001, ((limitCurr_ = c)) * 1000) == bus_->ku8MBSuccess;
+  return bus_->writeSingleRegister(0x0001, ((limitCurr_ = c)) * (dps5020_? 100 : 1000)) == bus_->ku8MBSuccess;
 }
 
 bool DPS::isCC() const { return cc_; }
