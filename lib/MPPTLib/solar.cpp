@@ -185,13 +185,17 @@ void Solar::doConnect() {
     if (wifiap.length() && wifipass.length()) {
       WiFi.begin(wifiap.c_str(), wifipass.c_str());
       WiFi.setHostname(id_.c_str());
-      if (WiFi.waitForConnectResult() == WL_CONNECTED) {
+
+      uint8_t wifiConnectStatus = WiFi.waitForConnectResult();
+      if (wifiConnectStatus == WL_CONNECTED) {
         log("Wifi connected! hostname: " + id_);
         log("IP: " + WiFi.localIP().toString());
         MDNS.begin(id_.c_str());
         MDNS.addService("http", "tcp", 80);
         server_.begin();
         lastConnected_ = millis();
+      } else {
+        log("Could not connect Wifi. wl_status: " + String(wifiConnectStatus));
       }
     } else log("no wifiap or wifipass set!");
   }
