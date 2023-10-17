@@ -10,29 +10,36 @@ def getGitDate():
   return shellCmd("git log -1 --date=format:%Y%m%d --format=%ad")
 def getVersion():
   try:
-    return getDescribe() + "-" + str(getGitDate())
+    return getDescribe().replace("-dirty", ".d") + "-" + str(getGitDate())
   except Exception as e:
     return os.path.basename(os.getcwd())
-
-
-if len(sys.argv) > 1 and sys.argv[1] == "version":
-  print("-DGIT_VERSION=\\\"%s\\\"" % getVersion())
-
-elif len(sys.argv) > 1 and sys.argv[1] == "simple":
-  print(getVersion())
-
-elif len(sys.argv) > 1 and sys.argv[0].endswith("scons"): #pre/post extra_script
-  Import("env")
-  # print(Back.GREEN + Fore.BLACK + "sys argv" + Style.RESET_ALL + str(sys.argv))
-  # print(Back.GREEN + Fore.BLACK + "env dump" + Style.RESET_ALL + str(env.Dump()))
-  # print(Back.GREEN + Fore.BLACK + "projenv" + Style.RESET_ALL + str(projenv.Dump()))
+def prettyPrint():
   try: #optional colorful output
     from colorama import Fore, Back, Style
-    print(Back.YELLOW + Fore.BLACK + " solar version " + Back.BLACK + Fore.YELLOW + " " + getVersion() + " " + Style.RESET_ALL)
+    print(Back.YELLOW + Fore.BLACK + " git version " + Back.BLACK + Fore.YELLOW + " " + getVersion() + " " + Style.RESET_ALL)
   except Exception:
-    print("solar version " + getVersion())
-  # -- not working, breaks partition.bin for some reason -- #
-  # progname = "solar-%s-%s" % (env.get("BOARD"), getVersion())
-  # log(" program name ", progname)
-  # env.Replace(PROGPREFIX=progname)
+    print("git version " + getVersion())
 
+
+arg = sys.argv[1] if len(sys.argv) > 1 else ""
+
+if arg == "version":
+  prettyPrint()
+elif arg == "simple":
+  print(getVersion())
+
+else:
+  prettyPrint()
+
+  try: #if running inside platformio
+    Import("env")
+    # print(env.Dump()) # <- can use this to see what's available
+    bpath = os.path.join(env.subst("$BUILD_DIR"), "generated")
+    print(" - version injection to " + bpath)
+
+    if not os.path.exists(bpath): os.makedirs(bpath)
+    with open(os.path.join(bpath, "version.cpp"), 'w+') as ofile:
+      ofile.write("const char* GIT_VERSION(\"" + getVersion() + "\");" + os.linesep)
+    env.BuildSources(os.path.join(bpath, "build"), bpath)
+  except NameError:
+    pass
