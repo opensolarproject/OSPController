@@ -1,6 +1,7 @@
 #pragma once
 #include <WString.h>
-#include <FreeRTOS.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <functional>
 #include <map>
 #include <list>
